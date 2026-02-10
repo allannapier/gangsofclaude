@@ -1,0 +1,22 @@
+# Game state and player data
+.claude/game-state/
+.claude/memory/
+
+# Local settings (may contain API keys or personal config)
+.claude/settings.local.json
+
+# Logs and temporary files
+*.log
+*.tmp
+.env
+*.backup
+
+# IDE and OS files
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# Node modules (if any web dependencies added)
+node_modules/

@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cp /home/allan/code/la_cosa_nostra/.claude/game-state/save.json /home/allan/code/la_cosa_nostra/.claude/game-state/save.backup.json"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Check if a saved game exists at /home/allan/code/la_cosa_nostra/.claude/game-state/save.json. If it exists and has a player name set, inform the user that their saved game is ready. If the file doesn't exist or player name is empty, inform the user they can start a new game with /start-game."
+          }
+        ]
+      }
+    ]
+  }
+}
