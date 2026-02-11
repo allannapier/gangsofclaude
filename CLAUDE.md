@@ -1,6 +1,6 @@
-# La Cosa Nostra - Claude Code Game
+# Gangs of Claude - Claude Code Game
 
-This project is an immersive text-based mafia game built entirely within Claude Code using agents, skills, and hooks.
+This project is an immersive text-based mafia game built entirely within Claude Code using agents, skills, and hooks, featuring a companion-style web interface for rich gameplay.
 
 ## Claude Code Extension Features Guide
 

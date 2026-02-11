@@ -1,10 +1,10 @@
-# La Cosa Nostra
+# Gangs of Claude
 
-A text-based mafia strategy game built entirely within Claude Code using agents, skills, and hooks.
+A text-based mafia strategy game built entirely within Claude Code using agents, skills, and hooks, with a companion-style web interface.
 
 ## Overview
 
-La Cosa Nostra creates a **true multiplayer experience** where **22 AI-controlled characters** across 4 rival families each have unique personalities, motivations, and decision-making patterns. You start as an unaffiliated street hustler, must get recruited into a family, and climb the ranks while navigating an unstable peace between families.
+Gangs of Claude creates a **true multiplayer experience** where **22 AI-controlled characters** across 4 rival families each have unique personalities, motivations, and decision-making patterns. You start as an unaffiliated street hustler, must get recruited into a family, and climb the ranks while navigating an unstable peace between families.
 
 ## Quick Start
 
