@@ -139,6 +139,7 @@ const browserClients = new Map<string, WebSocket>();
 let cliConnection: WebSocket | null = null;
 let cliProcess: ReturnType<typeof spawn> | null = null;
 let cliStdoutBuffer = '';
+const pendingPrompts: string[] = [];
 
 // Start Claude Code CLI process
 async function startCliProcess() {
@@ -226,6 +227,8 @@ function stopCliProcess() {
     cliProcess.kill('SIGTERM');
     cliProcess = null;
   }
+  cliConnection = null;
+  pendingPrompts.length = 0;
 }
 
 // Create WebSocket server for browsers
@@ -305,6 +308,21 @@ Bun.serve({
 
       if (data.type === 'cli') {
         cliConnection = ws;
+
+        // Flush any queued prompts that arrived before CLI websocket connected.
+        while (pendingPrompts.length > 0 && cliConnection.readyState === WebSocket.OPEN) {
+          const prompt = pendingPrompts.shift()!;
+          const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+          const ndjson = JSON.stringify({
+            type: 'user',
+            requestId,
+            message: {
+              role: 'user',
+              content: prompt,
+            },
+          }) + '\n';
+          cliConnection.send(ndjson);
+        }
 
         // Notify all browsers that CLI is connected
         for (const [id, client] of browserClients) {
@@ -476,102 +494,61 @@ Bun.serve({
           // Not JSON, continue to forward
         }
 
-        // Try to forward to CLI via WebSocket first, then stdin
-        let forwarded = false;
+        // Extract prompt robustly from either JSON envelope or raw text.
+        let prompt = '';
+        if (typeof message === 'string') {
+          try {
+            const msg = JSON.parse(message);
+            prompt = String(msg.prompt || msg.content || '');
+          } catch {
+            prompt = message;
+          }
+        } else {
+          const msg: any = message;
+          prompt = String(msg?.prompt || msg?.content || '');
+        }
+
+        if (!prompt.trim()) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: 'Empty prompt received',
+          }));
+          return;
+        }
 
         if (cliConnection && cliConnection.readyState === WebSocket.OPEN) {
           try {
-            const msg = typeof message === 'string' ? JSON.parse(message) : message;
-            const prompt = msg.prompt || msg.content || message;
-            console.log('📤 Forwarding to CLI via WebSocket:', prompt);
-            try {
-              writeFileSync('/tmp/ws-debug.log', `Forwarding to CLI WebSocket: ${prompt}\n`, { flag: 'a' });
-            } catch (e) {}
-
-            // Send in correct Claude Code WebSocket format
-            const requestId = 'req_' + Date.now();
+            const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
             const ndjson = JSON.stringify({
               type: 'user',
               requestId,
               message: {
                 role: 'user',
-                content: typeof prompt === 'string' ? prompt : String(prompt),
+                content: prompt,
               },
             }) + '\n';
-            console.log('📡 NDJSON to CLI:', ndjson);
-            try {
-              writeFileSync('/tmp/ws-debug.log', `Sending to CLI: ${ndjson}\n`, { flag: 'a' });
-            } catch (e) {}
             cliConnection.send(ndjson);
-            forwarded = true;
           } catch (e) {
             console.error('Error forwarding to CLI WebSocket:', e);
           }
+          return;
         }
 
-        // Fallback: write to CLI stdin if WebSocket not available and process exists
-        if (!forwarded && cliProcess && cliProcess.stdin) {
-          try {
-            const msg = typeof message === 'string' ? JSON.parse(message) : message;
-            const prompt = msg.prompt || msg.content || message;
-            console.log('📤 Forwarding to CLI via stdin:', prompt);
-            try {
-              writeFileSync('/tmp/ws-debug.log', `Forwarding to CLI stdin: ${prompt}\n`, { flag: 'a' });
-            } catch (e) {}
-            cliProcess.stdin.write(prompt + '\n');
-            forwarded = true;
-          } catch (e) {
-            console.error('Error forwarding to CLI stdin:', e);
-          }
-        }
+        // CLI websocket not ready yet: queue prompt and start CLI if needed.
+        pendingPrompts.push(prompt);
+        ws.send(JSON.stringify({
+          type: 'info',
+          message: 'CLI starting up... command queued.',
+        }));
 
-        if (!forwarded) {
+        if (!cliProcess && !cliConnection) {
           // CLI not connected - auto-start it
           console.log('📱 CLI not connected - auto-starting...');
           try {
             writeFileSync('/tmp/ws-debug.log', `CLI NOT connected, auto-starting...\n`, { flag: 'a' });
           } catch (e) {}
-          ws.send(JSON.stringify({
-            type: 'info',
-            message: 'CLI starting up... Please wait.',
-          }));
-          // Start CLI process
           startCliProcess().then(() => {
-            console.log('✅ CLI auto-started, retrying message...');
-            // Retry sending the message after CLI starts
-            setTimeout(() => {
-              let retryForwarded = false;
-
-              if (cliConnection && cliConnection.readyState === WebSocket.OPEN) {
-                try {
-                  const msg = typeof message === 'string' ? JSON.parse(message) : message;
-                  const prompt = msg.prompt || msg.content || message;
-                  const requestId = 'req_' + Date.now();
-                  const ndjson = JSON.stringify({
-                    type: 'user',
-                    requestId,
-                    message: {
-                      role: 'user',
-                      content: typeof prompt === 'string' ? prompt : String(prompt),
-                    },
-                  }) + '\n';
-                  cliConnection.send(ndjson);
-                  retryForwarded = true;
-                } catch (e) {
-                  console.error('Error retrying via WebSocket:', e);
-                }
-              }
-
-              if (!retryForwarded && cliProcess && cliProcess.stdin) {
-                try {
-                  const msg = typeof message === 'string' ? JSON.parse(message) : message;
-                  const prompt = msg.prompt || msg.content || message;
-                  cliProcess.stdin.write(prompt + '\n');
-                } catch (e) {
-                  console.error('Error retrying via stdin:', e);
-                }
-              }
-            }, 2000); // Wait 2s for CLI to connect
+            console.log('✅ CLI auto-started; queued prompts will flush on CLI websocket connect');
           }).catch(err => {
             console.error('Failed to auto-start CLI:', err);
             ws.send(JSON.stringify({
@@ -580,6 +557,7 @@ Bun.serve({
             }));
           });
         }
+        return;
       } else {
         // Message from CLI - forward to all browsers
         const messageStr = typeof message === 'string' ? message : String(message);

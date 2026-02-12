@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if echo \"$HOOK_TOOL_INPUT\" | jq -e '.skill == \"next-turn\"' > /dev/null 2>&1; then /home/allan/code/la_cosa_nostra/.claude/hooks/increment-turn.sh; fi"
+            "command": "if echo \"$HOOK_TOOL_INPUT\" | jq -e '.skill == \"next-turn\"' > /dev/null 2>&1; then ./.claude/hooks/increment-turn.sh; fi"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cp /home/allan/code/la_cosa_nostra/.claude/game-state/save.json /home/allan/code/la_cosa_nostra/.claude/game-state/save.backup.json"
+            "command": "mkdir -p .claude/game-state && cp .claude/game-state/save.json .claude/game-state/save.backup.json 2>/dev/null || true"
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "Check if a saved game exists at /home/allan/code/la_cosa_nostra/.claude/game-state/save.json. If it exists and has a player name set, inform the user that their saved game is ready. If the file doesn't exist or player name is empty, inform the user they can start a new game with /start-game."
+            "prompt": "Check if a saved game exists at .claude/game-state/save.json. If it exists and has a player name set, inform the user that their saved game is ready. If the file doesn't exist or player name is empty, inform the user they can start a new game with /start-game."
           }
         ]
       }

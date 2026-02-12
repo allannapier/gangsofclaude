@@ -3,7 +3,10 @@
 # Automatically increments the turn counter BEFORE the skill processes characters
 # This ensures all actions logged during turn processing use the correct turn number
 
-SAVE_JSON="/home/allan/code/la_cosa_nostra/.claude/game-state/save.json"
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+SAVE_JSON="$ROOT_DIR/.claude/game-state/save.json"
 
 # Read current turn
 if [[ -f "$SAVE_JSON" ]]; then

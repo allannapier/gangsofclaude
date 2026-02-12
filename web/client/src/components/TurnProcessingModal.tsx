@@ -35,7 +35,7 @@ const backgrounds = [
 ];
 
 export function TurnProcessingModal({ isOpen }: TurnProcessingModalProps) {
-  const { gameState, events } = useGameStore();
+  const { gameState, events, processingTurnTarget } = useGameStore();
   const [currentAction, setCurrentAction] = useState<Action | null>(null);
   const [progress, setProgress] = useState(0);
   const [actionCount, setActionCount] = useState(0);
@@ -48,29 +48,18 @@ export function TurnProcessingModal({ isOpen }: TurnProcessingModalProps) {
   // Track which turn we're processing - capture it on first open
   useEffect(() => {
     if (isOpen && isFirstOpenRef.current) {
-      // Always use the turn from the latest event, or gameState.turn + 1 if no events yet
-      // This ensures we show the turn being processed, not the previous turn
-      const latestEvent = events.length > 0
-        ? events.reduce((latest, e) => e.turn > latest.turn ? e : latest, events[0])
-        : null;
-
-      // The turn being processed is either:
-      // 1. The turn from the latest event (if events exist)
-      // 2. gameState.turn + 1 (we're starting a new turn)
-      let targetTurn = latestEvent?.turn || (gameState.turn + 1);
-
-      // Ensure at least turn 1
-      if (targetTurn === 0) targetTurn = 1;
-
+      // Use explicit store target if present, fallback to upcoming turn.
+      let targetTurn = processingTurnTarget ?? (gameState.turn + 1);
+      if (targetTurn < 1) targetTurn = 1;
       setProcessingTurn(targetTurn);
       isFirstOpenRef.current = false;
-      console.log('[TurnProcessingModal] Processing turn:', targetTurn, { gameStateTurn: gameState.turn, latestEventTurn: latestEvent?.turn });
+      console.log('[TurnProcessingModal] Processing turn:', targetTurn, { gameStateTurn: gameState.turn, processingTurnTarget });
     }
 
     if (!isOpen) {
       isFirstOpenRef.current = true;
     }
-  }, [isOpen, gameState.turn, events]);
+  }, [isOpen, gameState.turn, processingTurnTarget]);
 
   // Cycle background images
   useEffect(() => {
@@ -95,16 +84,6 @@ export function TurnProcessingModal({ isOpen }: TurnProcessingModalProps) {
       return;
     }
 
-    // Check if we have events for a different turn than expected
-    // This handles cases where the skill didn't increment turn properly
-    const latestEvent = events.length > 0 ? events[events.length - 1] : null;
-    if (latestEvent && latestEvent.turn !== processingTurn && latestEvent.turn > 0) {
-      console.log('[TurnProcessingModal] Adjusting to new turn:', latestEvent.turn);
-      setProcessingTurn(latestEvent.turn);
-      lastEventCountRef.current = 0; // Reset since we're switching turns
-      seenActionsRef.current.clear();
-    }
-
     // Get events for the turn we're processing
     const currentTurnEvents = events.filter(e => e.turn === processingTurn);
 
@@ -114,7 +93,7 @@ export function TurnProcessingModal({ isOpen }: TurnProcessingModalProps) {
       totalEvents: events.length,
       currentTurnEvents: currentTurnEvents.length,
       lastCount: lastEventCountRef.current,
-      sampleEvent: latestEvent
+      processingTurnTarget
     });
 
     // Check if we have new events
@@ -147,7 +126,7 @@ export function TurnProcessingModal({ isOpen }: TurnProcessingModalProps) {
       const progressPercent = Math.min((currentTurnEvents.length / 22) * 100, 95);
       setProgress(progressPercent);
     }
-  }, [events, processingTurn, isOpen]);
+  }, [events, processingTurn, processingTurnTarget, isOpen]);
 
   if (!isOpen) return null;
 

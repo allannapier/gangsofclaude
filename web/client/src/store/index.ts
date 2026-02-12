@@ -44,6 +44,7 @@ interface GameStore {
 
   // Turn processing
   isProcessingTurn: boolean;
+  processingTurnTarget: number | null;
   setIsProcessingTurn: (processing: boolean) => void;
 
   // Actions
@@ -121,6 +122,7 @@ export const useGameStore = create<GameStore>()(
 
       // Turn processing
       isProcessingTurn: false,
+      processingTurnTarget: null,
 
       // Tasks
       tasks: [],
@@ -331,21 +333,25 @@ export const useGameStore = create<GameStore>()(
       sessionId: state.sessionId,
     });
 
-    // Log player action to server
-    get().sendToCli({
-      type: 'log_player_action',
-      actor: state.player.name,
-      action: skill,
-      target: target,
-      description: `Player executed /${skill}${target ? ' on ' + target : ''}`,
-      sessionId: state.sessionId,
-    });
+    // Log player action to server, except /next-turn.
+    // /next-turn drives turn simulation and should not pollute turn action streams.
+    if (skill !== 'next-turn') {
+      get().sendToCli({
+        type: 'log_player_action',
+        actor: state.player.name,
+        action: skill,
+        target: target,
+        description: `Player executed /${skill}${target ? ' on ' + target : ''}`,
+        sessionId: state.sessionId,
+      });
+    }
 
     // For next-turn, show processing modal instead of command response modal
     if (skill === 'next-turn') {
       set({
         currentCommand: command,
         isProcessingTurn: true,
+        processingTurnTarget: state.gameState.turn + 1,
         commandResponseModalOpen: false,
       });
     } else {
@@ -379,7 +385,10 @@ export const useGameStore = create<GameStore>()(
 
   setCommandResponseModalOpen: (open) => set({ commandResponseModalOpen: open }),
 
-      setIsProcessingTurn: (processing) => set({ isProcessingTurn: processing }),
+      setIsProcessingTurn: (processing) => set((state) => ({
+        isProcessingTurn: processing,
+        processingTurnTarget: processing ? state.processingTurnTarget : null,
+      })),
 }),
     {
       name: 'la-cosa-nostra-storage',

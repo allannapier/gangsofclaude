@@ -30,6 +30,7 @@ function App() {
     setCommandResponse,
     setIsCommandLoading,
     isProcessingTurn,
+    processingTurnTarget,
     setIsProcessingTurn,
   } = useGameStore();
 
@@ -97,18 +98,21 @@ function App() {
     }
   }, [gameState.turn, setViewingTurn, requestEvents]);
 
-  // Hide processing modal when we receive enough events for the current turn
+  // Hide processing modal when we receive enough events for the turn being processed
   useEffect(() => {
-    const currentTurnEvents = events.filter(e => e.turn === gameState.turn);
-    // If we have 22+ events for current turn (all characters acted), hide modal
-    if (currentTurnEvents.length >= 22 && isProcessingTurn) {
+    if (!isProcessingTurn || processingTurnTarget == null) {
+      return;
+    }
+
+    const targetTurnEvents = events.filter((e) => e.turn === processingTurnTarget);
+    if (targetTurnEvents.length >= 22) {
       // Give it a moment to show the last action
       const timer = setTimeout(() => {
         setIsProcessingTurn(false);
       }, 2000);
       return () => clearTimeout(timer);
     }
-  }, [events, gameState.turn, isProcessingTurn, setIsProcessingTurn]);
+  }, [events, isProcessingTurn, processingTurnTarget, setIsProcessingTurn]);
 
   useEffect(() => {
     if (connected && ws && !hasRequestedEvents.current) {
