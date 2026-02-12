@@ -278,3 +278,79 @@ The game uses:
 - **Subagents** for NPC interactions and game systems
 - **Hooks** for game state persistence and event handling
 - **Memory** for persistent game state and player progress
+
+## Game-Specific Implementation
+
+### Game State Storage
+
+All game state is stored in `.claude/game-state/save.json`:
+
+```json
+{
+  "turn": 4,
+  "phase": "playing",
+  "player": { "name": "Player", "rank": "Outsider", ... },
+  "families": { "Marinelli": {...}, "Rossetti": {...}, ... },
+  "events": [ ... ],
+  "messages": [ ... ]
+}
+```
+
+### Turn Processing System
+
+**Critical:** The game uses a PreToolUse hook to ensure turn consistency:
+
+- **Hook:** `.claude/hooks/increment-turn.sh`
+- **Trigger:** Runs before `/next-turn` skill executes
+- **Purpose:** Automatically increments turn counter before any AI characters act
+
+This prevents the bug where events would be logged under the wrong turn number.
+
+### Available Skills
+
+Located in `.claude/skills/`:
+- `start-game` - Initialize new game with ASCII art title
+- `status` - Display player stats and game state
+- `seek-patronage` - Get recruited by a family (Outsider only)
+- `message` - Send messages to characters
+- `next-turn` - Advance turn, all 22 AI characters act
+- `promote` - Check for rank advancement
+- `attack` - Launch violent actions (assassinate, beatdown, etc.)
+- `recruit` - Build network/mentor others
+- `expand` - Grow family territory
+- `intel` - Espionage operations (spy, steal, blackmail, survey)
+
+### AI Characters
+
+22 unique characters across 4 families, each defined as a subagent in `.claude/agents/`:
+
+**Marinelli Family (Aggressive):**
+- Vito Marinelli (Don), Salvatore Underboss, Bruno Consigliere
+- Marco Capo, Luca Soldier, Enzo Associate
+
+**Rossetti Family (Business):**
+- Marco Rossetti (Don), Carla Underboss, Antonio Consigliere
+- Franco Capo, Maria Soldier, Paolo Associate
+
+**Falcone Family (Cunning):**
+- Sofia Falcone (Don), Victor Underboss, Dante Consigliere
+- Iris Capo, Leo Soldier
+
+**Moretti Family (Honorable):**
+- Antonio Moretti (Don), Giovanni Underboss, Elena Consigliere
+- Ricardo Capo, Carlo Soldier
+
+### Web UI Integration
+
+The web UI (in `/web`) communicates with Claude Code via WebSocket bridge:
+
+1. Browser sends commands as JSON
+2. Server translates to NDJSON for Claude Code CLI
+3. CLI executes skill, writes to `save.json`
+4. Server polls `save.json` every 500ms
+5. Changes broadcast to browser in real-time
+
+**Key files:**
+- `web/server/index.ts` - WebSocket bridge server
+- `web/client/src/components/TurnProcessingModal.tsx` - Real-time turn visualization
+- `web/client/src/store/index.ts` - Zustand state management

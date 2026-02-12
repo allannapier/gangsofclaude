@@ -50,17 +50,34 @@ The Commission is watching. The families are watching. Every choice matters.
 
 ## Game State Reset
 
-Reset the player state to:
-- name: "Player" (until they set it)
-- rank: "Outsider"
-- family: null
-- loyalty: 50
-- respect: 0
-- wealth: 50
-- contacts: []
-- enemies: []
+Create/overwrite `.claude/game-state/save.json` with initial state:
 
-Keep family data at initial values, reset turn to 0.
+```json
+{
+  "turn": 0,
+  "phase": "playing",
+  "player": {
+    "name": "Player",
+    "rank": "Outsider",
+    "family": null,
+    "loyalty": 50,
+    "respect": 0,
+    "wealth": 50,
+    "contacts": [],
+    "enemies": []
+  },
+  "families": {
+    "Marinelli": { "territory": 25, "soldiers": 3, "wealth": 5000, "standing": "Strong" },
+    "Rossetti": { "territory": 25, "soldiers": 3, "wealth": 6000, "standing": "Strong" },
+    "Falcone": { "territory": 25, "soldiers": 3, "wealth": 5500, "standing": "Strong" },
+    "Moretti": { "territory": 25, "soldiers": 3, "wealth": 5200, "standing": "Strong" }
+  },
+  "events": [],
+  "messages": []
+}
+```
+
+**IMPORTANT:** The `events` array must be initialized as an empty array `[]`. This is where all character actions will be logged during turns.
 
 ## Next Steps
 

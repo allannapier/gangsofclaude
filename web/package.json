@@ -1,0 +1,23 @@
+{
+  "name": "gangs-of-claude-ui",
+  "version": "1.0.0",
+  "description": "Web UI for Gangs of Claude mafia game",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run server/dev.ts",
+    "build": "bun run client/build.ts && bun run server/build.ts",
+    "start": "bun run server/index.ts",
+    "client:dev": "cd client && bun run dev",
+    "client:build": "cd client && bun run build"
+  },
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "dependencies": {
+    "hono": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.0.0"
+  }
+}

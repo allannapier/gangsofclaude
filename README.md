@@ -8,6 +8,27 @@ Gangs of Claude creates a **true multiplayer experience** where **22 AI-controll
 
 ## Quick Start
 
+### Option 1: Web UI (Recommended)
+
+1. **Start the web interface:**
+   ```bash
+   cd web
+   bun install
+   bun run dev
+   ```
+
+2. **Open browser:** `http://localhost:5174`
+
+3. **Start a new game** via the command palette (`Ctrl+K`) or type `/start-game`
+
+The web UI provides:
+- Real-time turn processing with visual feedback
+- Family panels showing all 22 AI characters
+- Territory map and event log
+- Live streaming of Claude responses
+
+### Option 2: CLI Only
+
 1. **Start a new game:**
    ```
    /start-game
@@ -132,10 +153,37 @@ Don (family head)
 
 ## Technical Details
 
-Built using Claude Code's extension features:
-- **Skills** for game commands
-- **Sub-agents** for AI characters
-- **Hooks** for auto-save
+### Web UI Architecture
+
+The web UI provides a real-time companion interface:
+
+```
+Browser UI ←→ WebSocket (JSON) ←→ Bun/Hono Server ←→ WebSocket (NDJSON) ←→ Claude Code CLI
+```
+
+Key features:
+- **Turn Processing Modal** - Visual feedback showing each AI character's action as it executes
+- **Real-time Event Polling** - Server polls `save.json` every 500ms for updates
+- **State Persistence** - Zustand store with localStorage backup
+- **Command Palette** - Quick access via `Ctrl+K`
+
+### Turn Processing System
+
+The game uses a **PreToolUse hook** to ensure turn consistency:
+
+1. User invokes `/next-turn`
+2. **Hook automatically increments turn** before skill executes
+3. All 22 AI characters process in rank order (Associates → Soldiers → Capos → Consiglieres → Underbosses → Dons)
+4. Each character's action is logged immediately to `save.json` events array
+5. Web UI polls `save.json` and displays actions in real-time
+
+This prevents the turn counter from getting out of sync with logged events.
+
+### Claude Code Extension Features
+
+- **Skills** (`/start-game`, `/next-turn`, `/status`, etc.) for game commands
+- **Sub-agents** for 22 unique AI characters with distinct personalities
+- **Hooks** for auto-save and turn management
 - **Memory** for persistent game state
 
 ## License

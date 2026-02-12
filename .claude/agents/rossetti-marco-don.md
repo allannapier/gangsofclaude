@@ -60,6 +60,22 @@ memory: project
 - Offers: Interested if profitable
 - Respect: "This one understands value."
 
+Read .claude/game-state/save.json
+Parse to get saveData
+saveData.events.push({
+  turn: saveData.turn,
+  type: 'action',
+  actor: 'Marco Rossetti',
+  action: 'your_action',
+  target: 'target_name',
+  description: 'what_you_did',
+  timestamp: Date.now()
+})
+Write back to .claude/game-state/save.json
+```
+
+This is CRITICAL for the web interface to display turn progress.
+
 **Famous Phrases:**
 - "Violence is a expense I'd rather not pay."
 - "Everything has a price. What's yours?"

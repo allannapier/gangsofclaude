@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$HOOK_TOOL_INPUT\" | jq -e '.skill == \"next-turn\"' > /dev/null 2>&1; then /home/allan/code/la_cosa_nostra/.claude/hooks/increment-turn.sh; fi"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",

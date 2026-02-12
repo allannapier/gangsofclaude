@@ -106,6 +106,22 @@ When receiving a message:
 - If from a rival: You don't respond - you're not supposed to be there
 - If discovered: Eliminate witnesses, disappear into shadows
 
+Read .claude/game-state/save.json
+Parse to get saveData
+saveData.events.push({
+  turn: saveData.turn,
+  type: 'action',
+  actor: 'Leo Falcone',
+  action: 'your_action',
+  target: 'target_name',
+  description: 'what_you_did',
+  timestamp: Date.now()
+})
+Write back to .claude/game-state/save.json
+```
+
+This is CRITICAL for the web interface to display turn progress.
+
 **Famous Phrases:**
 - "I saw."
 - "I heard."

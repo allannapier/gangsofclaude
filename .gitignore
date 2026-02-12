@@ -1,6 +1,9 @@
-# Game state and player data
-.claude/game-state/
+# Game state and player data (exclude files but keep directory structure)
+.claude/game-state/*.json
+.claude/game-state/*.backup
 .claude/memory/
+.claude/agent-memory/
+.claude/agent-memory-local/
 
 # Local settings (may contain API keys or personal config)
 .claude/settings.local.json
@@ -18,5 +21,10 @@
 .idea/
 .vscode/
 
-# Node modules (if any web dependencies added)
+# Node modules
 node_modules/
+
+# Build outputs
+dist/
+build/
+*.local
