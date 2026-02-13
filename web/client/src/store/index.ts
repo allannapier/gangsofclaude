@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { SkillCommand, Family, GameState, GameEvent } from '../types';
-import { FAMILIES, getCharacterById } from '../data/families';
+import { getCharacterById } from '../data/families';
 
 interface GameStore {
   // Connection state
@@ -92,9 +92,9 @@ export const useGameStore = create<GameStore>()(
         phase: 'setup',
         turn: 0,
         winner: undefined,
-      },
+      } as GameState,
 
-      families: FAMILIES,
+      families: [],  // Will be populated from gameState.families via WebSocket
       player: {
         name: 'Player',
         rank: 'Outsider',

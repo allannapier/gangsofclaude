@@ -6,8 +6,8 @@ export const FAMILIES: Family[] = [
     name: 'Marinelli',
     fullName: 'Marinelli Family',
     color: '#dc2626',
-    territory: ['Little Italy', 'Warehouse District'],
-    stats: { wealth: 85000, respect: 75, territory: 5 },
+    territory: ['Little Italy', 'Warehouse District'],  // Changed from 'territory' to 'territories' (array)
+    stats: { wealth: 85000, respect: 75, territory: 5 },  // Note: territory count is derived from territories.length
     members: [
       {
         id: 'marinelli_vito',

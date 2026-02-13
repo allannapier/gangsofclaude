@@ -91,6 +91,7 @@ function readAndBroadcastSaveData() {
             gameState: {
               turn: saveData.turn,
               phase: saveData.phase || 'playing',
+              families: saveData.families,
             },
           }));
         }
@@ -680,13 +681,6 @@ Bun.serve({
                   if (isNextTurnResult) {
                     console.log('🏁 Turn processing complete, broadcasting turn_complete');
                     broadcastTurnComplete();
-                  }
-                } catch (e) {
-                  console.error('Error reading save.json:', e);
-                }
-              }, 100); // Small delay to ensure file is written
-            }
-                    console.log('⚠️ save.json not found at:', saveJsonPath);
                   }
                 } catch (e) {
                   console.error('Error reading save.json:', e);

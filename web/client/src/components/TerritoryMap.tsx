@@ -2,7 +2,7 @@ import { useGameStore } from '../store';
 import { getFamilyById } from '../data/families';
 
 export function TerritoryMap() {
-  const { families, gameState, selectedFamily, setSelectedFamily } = useGameStore();
+  const { families: storeFamilies, gameState, selectedFamily, selectedTerritory, setSelectedFamily, setDialogSkill, setSelectedTerritory, player } = useGameStore();
 
   const territories = [
     'Little Italy', 'North End', 'The Docks',
@@ -11,13 +11,30 @@ export function TerritoryMap() {
     'East Side', 'Harbor', 'Old Town',
   ];
 
+  // Use families from game state if available, otherwise fall back to store families
+  const families = gameState.families?.length > 0 ? gameState.families : storeFamilies;
+
   const getTerritoryOwner = (territory: string) => {
     for (const family of families) {
-      if (family.territory.includes(territory)) {
+      // Check if territory is in this family's owned territories (now an array)
+      if (family.territory && family.territory.includes(territory)) {
         return family.id;
       }
     }
     return null;
+  };
+
+  const handleTerritoryClick = (territory: string) => {
+    const ownerId = getTerritoryOwner(territory);
+
+    if (ownerId) {
+      // Owned territory - select the family
+      setSelectedFamily(ownerId);
+    } else {
+      // Unclaimed territory - open claim/expand dialog
+      setSelectedTerritory(territory);
+      setDialogSkill(player.family === 'None' ? 'expand' : 'claim');
+    }
   };
 
   return (
@@ -33,27 +50,37 @@ export function TerritoryMap() {
         {territories.map((territory) => {
           const ownerId = getTerritoryOwner(territory);
           const owner = ownerId ? getFamilyById(ownerId) : null;
+          const isUnclaimed = !owner;
+          const canClaim = player.family !== 'None';
 
           return (
             <div
               key={territory}
-              onClick={() => owner && setSelectedFamily(owner.id)}
+              onClick={() => handleTerritoryClick(territory)}
               className={`p-4 rounded-lg border-2 transition-all cursor-pointer ${
-                owner
-                  ? 'border-transparent bg-opacity-20 hover:bg-opacity-30'
-                  : 'border-zinc-800 bg-zinc-900/50'
+                isUnclaimed
+                  ? canClaim
+                    ? 'border-zinc-700 bg-zinc-900/50 hover:border-green-700 hover:bg-green-900/20'
+                    : 'border-zinc-800 bg-zinc-900/50 cursor-not-allowed opacity-60'
+                  : 'border-transparent bg-opacity-20 hover:bg-opacity-30'
               }`}
               style={owner ? {
                 backgroundColor: `${owner.color}20`,
                 borderColor: selectedFamily === owner.id ? owner.color : 'transparent',
+              } : isUnclaimed && canClaim ? {
+                borderColor: selectedTerritory === territory ? '#22c55e' : undefined,
               } : {}}
+              title={isUnclaimed ? canClaim ? 'Click to claim this territory' : 'Join a family to claim territory' : `Owned by ${owner?.name}`}
             >
               <div className="text-xs text-zinc-500 mb-1">
-                {owner?.name || 'Unclaimed'}
+                {isUnclaimed ? (canClaim ? '📍 Unclaimed' : '🔒 Unclaimed') : owner?.name}
               </div>
               <div className="text-sm font-medium truncate">
                 {territory}
               </div>
+              {isUnclaimed && canClaim && (
+                <div className="text-xs text-green-500 mt-1">+ Click to claim</div>
+              )}
             </div>
           );
         })}
