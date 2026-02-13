@@ -94,6 +94,22 @@ export const SKILLS: Skill[] = [
         hint: 'Investment amount',
         options: ['small', 'medium', 'large'],
       },
+      {
+        name: 'territory',
+        hint: 'Specific territory to claim (optional)',
+      },
+    ],
+  },
+  {
+    id: 'claim',
+    name: 'Claim Territory',
+    description: 'Claim a specific unowned territory for your family',
+    category: 'action',
+    arguments: [
+      {
+        name: 'territory',
+        hint: 'Territory to claim',
+      },
     ],
   },
   {

@@ -1,11 +1,137 @@
 import { useEffect, useState } from 'react';
 import { useGameStore } from '../store';
-import { SKILLS, getSkillsByCategory } from '../data/skills';
+import { SKILLS } from '../data/skills';
+
+type CommandError = {
+  message: string;
+  type: 'error' | 'info';
+};
 
 export function CommandPalette() {
-  const { setCommandPaletteOpen, executeSkill } = useGameStore();
+  const { setCommandPaletteOpen, executeSkill, setDialogSkill } = useGameStore();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [submitError, setSubmitError] = useState<CommandError | null>(null);
+
+  // Skills that need the dialog for parameter input
+  const needsDialog = ['seek-patronage', 'recruit', 'attack', 'intel', 'expand', 'message'];
+
+  // Validate and parse a raw command string
+  const validateCommand = (input: string): { valid: boolean; skillId?: string; error?: string } => {
+    const trimmed = input.trim();
+    if (!trimmed.startsWith('/')) {
+      return { valid: false, error: 'Commands must start with /' };
+    }
+
+    const parts = trimmed.slice(1).split(/\s+/);
+    const skillId = parts[0];
+
+    // Check if it's a known skill
+    const knownSkill = SKILLS.find(s => s.id === skillId);
+    if (!knownSkill) {
+      return { valid: false, error: `Unknown command: /${skillId}` };
+    }
+
+    // Check if the skill requires more arguments
+    if (needsDialog.includes(skillId) && parts.length < 2) {
+      return {
+        valid: false,
+        error: `/${skillId} requires arguments. Use the dialog or type: /${skillId} <args>`
+      };
+    }
+
+    return { valid: true, skillId };
+  };
+
+  // Handle raw command submission (typed directly)
+  const handleRawCommandSubmit = () => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+
+    // Clear previous errors
+    setSubmitError(null);
+
+    const validation = validateCommand(trimmed);
+
+    if (!validation.valid) {
+      setSubmitError({ message: validation.error!, type: 'error' });
+      return;
+    }
+
+    const parts = trimmed.slice(1).split(/\s+/);
+    const skillId = parts[0];
+    const args = parts.slice(1);
+
+    // Skills that need dialog should use it even with raw input if incomplete
+    if (needsDialog.includes(skillId) && args.length === 0) {
+      setDialogSkill(skillId);
+      setCommandPaletteOpen(false);
+      return;
+    }
+
+    // Parse arguments based on skill
+    const paramOrder: Record<string, string[]> = {
+      'seek-patronage': ['target'],
+      'recruit': ['target'],
+      'attack': ['target', 'type'],
+      'intel': ['target', 'type'],
+      'expand': ['amount'],
+      'message': ['recipient', 'content'],
+    };
+
+    const order = paramOrder[skillId] || [];
+    const parsedArgs: Record<string, any> = {};
+
+    // Map positional args to named parameters
+    // For message, the content may contain spaces - join all remaining parts
+    if (skillId === 'message') {
+      if (args.length >= 2) {
+        parsedArgs.recipient = args[0];
+        parsedArgs.content = args.slice(1).join(' ');
+      }
+    } else {
+      order.forEach((key, index) => {
+        if (args[index] !== undefined) {
+          parsedArgs[key] = args[index];
+        }
+      });
+    }
+
+    // If we have all required args, execute directly
+    if (needsDialog.includes(skillId)) {
+      const hasAllRequiredArgs = order.every((key, index) => {
+        // message is special - content is optional
+        if (skillId === 'message' && key === 'content' && index === 1) return true;
+        return parsedArgs[key] !== undefined;
+      });
+
+      if (hasAllRequiredArgs) {
+        // Execute directly with parsed args
+        executeSkill(skillId as any, parsedArgs);
+        setCommandPaletteOpen(false);
+      } else {
+        // Incomplete args, show dialog
+        setDialogSkill(skillId);
+        setCommandPaletteOpen(false);
+      }
+    } else {
+      // Core command with possible extra args
+      executeSkill(skillId as any, parsedArgs);
+      setCommandPaletteOpen(false);
+    }
+  };
+
+  const handleSkillSelect = (skillId: string) => {
+    if (needsDialog.includes(skillId)) {
+      // Close palette and open the parameter dialog
+      setCommandPaletteOpen(false);
+      setDialogSkill(skillId);
+    } else {
+      // Core commands execute directly
+      executeSkill(skillId as any, {});
+      setCommandPaletteOpen(false);
+    }
+  };
 
   const filteredSkills = SKILLS.filter(skill =>
     skill.name.toLowerCase().includes(query.toLowerCase()) ||
@@ -25,17 +151,24 @@ export function CommandPalette() {
         setSelectedIndex(i => Math.max(i - 1, 0));
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        const skill = filteredSkills[selectedIndex];
-        if (skill) {
-          executeSkill(skill.id as any);
-          setCommandPaletteOpen(false);
+        // Check if query looks like a full command (has spaces or is a known skill with args)
+        const trimmed = query.trim();
+        const looksLikeRawCommand = trimmed.includes(' ') || trimmed.match(/^\/\w+\s/);
+
+        if (looksLikeRawCommand) {
+          handleRawCommandSubmit();
+        } else {
+          const skill = filteredSkills[selectedIndex];
+          if (skill) {
+            handleSkillSelect(skill.id);
+          }
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [filteredSkills, selectedIndex, executeSkill, setCommandPaletteOpen]);
+  }, [filteredSkills, selectedIndex, query, handleSkillSelect, setCommandPaletteOpen]);
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-start justify-center pt-[20vh] z-50">
@@ -47,12 +180,29 @@ export function CommandPalette() {
           <input
             type="text"
             value={query}
-            onChange={(e) => { setQuery(e.target.value); setSelectedIndex(0); }}
-            placeholder="Type a command..."
+            onChange={(e) => { setQuery(e.target.value); setSelectedIndex(0); setSubmitError(null); }}
+            placeholder="Type a command or /skillname args..."
             className="flex-1 bg-transparent outline-none text-lg placeholder:text-zinc-600"
             autoFocus
           />
+          {query.trim() && (
+            <button
+              onClick={handleRawCommandSubmit}
+              className="px-3 py-1 bg-amber-600 hover:bg-amber-500 rounded-lg text-sm font-medium transition-colors"
+            >
+              Submit
+            </button>
+          )}
         </div>
+
+        {/* Error or info message */}
+        {submitError && (
+          <div className={`px-4 py-2 border-b ${submitError.type === 'error' ? 'bg-red-900/30 border-red-800' : 'bg-blue-900/30 border-blue-800'}`}>
+            <p className={`text-sm ${submitError.type === 'error' ? 'text-red-400' : 'text-blue-400'}`}>
+              {submitError.message}
+            </p>
+          </div>
+        )}
 
         <div className="max-h-80 overflow-auto p-2">
           {filteredSkills.length === 0 ? (
@@ -62,7 +212,7 @@ export function CommandPalette() {
               {filteredSkills.map((skill, index) => (
                 <button
                   key={skill.id}
-                  onClick={() => { executeSkill(skill.id as any); setCommandPaletteOpen(false); }}
+                  onClick={() => handleSkillSelect(skill.id)}
                   className={`w-full px-4 py-3 rounded-lg text-left transition-colors ${
                     index === selectedIndex ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'
                   }`}
@@ -92,7 +242,11 @@ export function CommandPalette() {
           </span>
           <span className="flex items-center gap-1">
             <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded">↵</kbd>
-            Select
+            {query.trim().includes(' ') ? 'Submit command' : 'Select'}
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded">/</kbd>
+            Commands
           </span>
           <span className="flex items-center gap-1">
             <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded">Esc</kbd>

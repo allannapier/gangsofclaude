@@ -1,19 +1,21 @@
 import { useState, useEffect } from 'react';
 import { useGameStore } from '../store';
 import { getCharacterById } from '../data/families';
+import type { SkillCommand } from '../types';
 
 interface ActionDialogProps {
-  skill: string;
+  skill: SkillCommand | string;
   onClose: () => void;
 }
 
 export function ActionDialog({ skill, onClose }: ActionDialogProps) {
-  const { selectedCharacter, executeSkill } = useGameStore();
+  const { selectedCharacter, executeSkill, selectedTerritory } = useGameStore();
   const [amount, setAmount] = useState<'small' | 'medium' | 'large'>('medium');
   const [attackType, setAttackType] = useState<'assassinate' | 'beatdown' | 'business' | 'territory'>('beatdown');
   const [intelType, setIntelType] = useState<'spy' | 'steal' | 'blackmail' | 'survey'>('survey');
   const [messageContent, setMessageContent] = useState('');
   const [targetCharacter, setTargetCharacter] = useState('');
+  const [claimTerritory, setClaimTerritory] = useState('');
 
   // Use selected character by default
   useEffect(() => {
@@ -21,6 +23,13 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
       setTargetCharacter(selectedCharacter);
     }
   }, [selectedCharacter]);
+
+  // Use selected territory by default for claim action
+  useEffect(() => {
+    if (selectedTerritory && (skill === 'claim' || skill === 'expand')) {
+      setClaimTerritory(selectedTerritory);
+    }
+  }, [selectedTerritory, skill]);
 
   const selectedChar = selectedCharacter ? getCharacterById(selectedCharacter) : null;
 
@@ -39,7 +48,10 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
         executeSkill('intel', { target: targetCharacter, type: intelType });
         break;
       case 'expand':
-        executeSkill('expand', { amount });
+        executeSkill('expand', { amount, territory: claimTerritory || undefined });
+        break;
+      case 'claim':
+        executeSkill('claim', { territory: claimTerritory });
         break;
       case 'message':
         executeSkill('message', { recipient: targetCharacter, content: messageContent });
@@ -57,6 +69,8 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
         return !!targetCharacter;
       case 'expand':
         return true;
+      case 'claim':
+        return !!claimTerritory.trim();
       case 'message':
         return !!targetCharacter && !!messageContent.trim();
       default:
@@ -74,6 +88,7 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
             {skill === 'attack' && '⚔️ Attack'}
             {skill === 'intel' && '🕵️ Gather Intel'}
             {skill === 'expand' && '📍 Expand Territory'}
+            {skill === 'claim' && '🏴 Claim Territory'}
             {skill === 'message' && '✉️ Send Message'}
           </h3>
           <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">✕</button>
@@ -87,7 +102,7 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
                 Target Character
                 {selectedChar && (
                   <span className="ml-2 text-xs text-zinc-500">
-                    (Selected: {selectedChar.fullName})
+                    (Selected: {selectedChar?.fullName})
                   </span>
                 )}
               </label>
@@ -103,7 +118,7 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
                   onClick={() => setTargetCharacter(selectedCharacter)}
                   className="mt-2 text-xs text-blue-400 hover:text-blue-300"
                 >
-                  Use selected: {selectedChar.fullName}
+                  Use selected: {selectedChar?.fullName}
                 </button>
               )}
             </div>
@@ -167,29 +182,65 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
 
           {/* Expand Amount Selection */}
           {skill === 'expand' && (
-            <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-2">Investment Amount</label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { value: 'small', label: 'Small', cost: '$1,000', risk: 'Low' },
-                  { value: 'medium', label: 'Medium', cost: '$5,000', risk: 'Medium' },
-                  { value: 'large', label: 'Large', cost: '$15,000', risk: 'High' },
-                ].map((amt) => (
-                  <button
-                    key={amt.value}
-                    onClick={() => setAmount(amt.value as any)}
-                    className={`p-3 rounded-md text-center transition-colors ${
-                      amount === amt.value
-                        ? 'bg-green-900/50 border border-green-700'
-                        : 'bg-zinc-800 border border-zinc-700 hover:border-zinc-600'
-                    }`}
-                  >
-                    <div className="font-medium text-sm">{amt.label}</div>
-                    <div className="text-xs text-zinc-500">{amt.cost}</div>
-                    <div className="text-xs text-amber-500">{amt.risk}</div>
-                  </button>
-                ))}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-2">Investment Amount</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { value: 'small', label: 'Small', cost: '$1,000', risk: 'Low' },
+                    { value: 'medium', label: 'Medium', cost: '$5,000', risk: 'Medium' },
+                    { value: 'large', label: 'Large', cost: '$15,000', risk: 'High' },
+                  ].map((amt) => (
+                    <button
+                      key={amt.value}
+                      onClick={() => setAmount(amt.value as any)}
+                      className={`p-3 rounded-md text-center transition-colors ${
+                        amount === amt.value
+                          ? 'bg-green-900/50 border border-green-700'
+                          : 'bg-zinc-800 border border-zinc-700 hover:border-zinc-600'
+                      }`}
+                    >
+                      <div className="font-medium text-sm">{amt.label}</div>
+                      <div className="text-xs text-zinc-500">{amt.cost}</div>
+                      <div className="text-xs text-amber-500">{amt.risk}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-2">
+                  Target Territory (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={claimTerritory}
+                  onChange={(e) => setClaimTerritory(e.target.value)}
+                  placeholder="e.g., Brooklyn, Queens, East Side"
+                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-md text-sm"
+                />
+                <p className="text-xs text-zinc-500 mt-1">
+                  Leave empty to expand randomly, or specify a territory to target it
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Claim Territory Selection */}
+          {skill === 'claim' && (
+            <div>
+              <label className="block text-sm font-medium text-zinc-400 mb-2">
+                Territory to Claim
+              </label>
+              <input
+                type="text"
+                value={claimTerritory}
+                onChange={(e) => setClaimTerritory(e.target.value)}
+                placeholder="e.g., Brooklyn, Queens, East Side"
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-md text-sm"
+              />
+              <p className="text-xs text-zinc-500 mt-1">
+                Claim an unowned territory for your family. Costs wealth and may provoke rivals.
+              </p>
             </div>
           )}
 

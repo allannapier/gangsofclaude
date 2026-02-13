@@ -83,5 +83,8 @@ If attack type is "assassinate":
 4. Calculate combat power
 5. Resolve combat
 6. Display appropriate ASCII art
-7. Update game state (wealth, territory, relationships)
+7. Update game state:
+   - Update family wealth and territory values
+   - **IMPORTANT**: If attack type is "territory" and the attacker wins, update the `territoryOwnership` map in save.json to reflect the new ownership. For example, if Marinelli captures "The Docks", add `"The Docks": "marinelli"` to the territoryOwnership map
+   - Update relationships (add enemies if attack failed)
 8. Save game state

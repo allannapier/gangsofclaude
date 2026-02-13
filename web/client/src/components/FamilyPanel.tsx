@@ -1,5 +1,4 @@
 import { useGameStore } from '../store';
-import { getFamilyById } from '../data/families';
 
 export function FamilyPanel() {
   const { families, selectedFamily, setSelectedFamily, selectedCharacter, setSelectedCharacter } = useGameStore();

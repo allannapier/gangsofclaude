@@ -2,14 +2,14 @@ import { useGameStore } from '../store';
 import { SKILLS } from '../data/skills';
 
 export function QuickActions() {
-  const { player, executeSkill, setDialogSkill, dialogSkill } = useGameStore();
+  const { player, executeSkill, setDialogSkill } = useGameStore();
   const isOutsider = player.rank === 'Outsider' || player.family === 'None';
 
   // Core skills - simple buttons (no params needed)
   const coreSkills = SKILLS.filter(s => s.category === 'core');
 
   // Skills that need the dialog
-  const needsDialog = ['seek-patronage', 'recruit', 'attack', 'intel', 'expand', 'message'];
+  const needsDialog = ['seek-patronage', 'recruit', 'attack', 'intel', 'expand', 'claim', 'message'];
 
   const handleSkillClick = (skillId: string) => {
     if (needsDialog.includes(skillId)) {
@@ -56,7 +56,7 @@ export function QuickActions() {
       <div>
         <h3 className="text-sm font-semibold text-zinc-400 mb-3">Actions</h3>
         <div className="grid grid-cols-2 gap-2">
-          {SKILLS.filter(s => s.category === 'action').map((skill) => (
+          {SKILLS.filter(s => s.category === 'action' && (s.id !== 'claim' || !isOutsider)).map((skill) => (
             <button
               key={skill.id}
               onClick={() => handleSkillClick(skill.id)}

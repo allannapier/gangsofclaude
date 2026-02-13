@@ -118,7 +118,7 @@ export function GameTabs() {
       </div>
 
       {/* Tab Content */}
-      <div className="flex-1 overflow-auto p-4">
+      <div className="flex-1 overflow-auto p-3 md:p-4">
         {activeTab === 'territories' ? (
           <div className="space-y-6">
             <div>
@@ -128,7 +128,7 @@ export function GameTabs() {
               </p>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-3">
               {territories.map((territory) => {
                 const ownerId = getTerritoryOwner(territory);
                 const owner = ownerId ? getFamilyById(ownerId) : null;
@@ -138,7 +138,7 @@ export function GameTabs() {
                   <div
                     key={territory}
                     onClick={() => handleTerritoryClick(territory)}
-                    className={`p-4 rounded-lg border-2 transition-all cursor-pointer ${
+                    className={`p-3 md:p-4 rounded-lg border-2 transition-all cursor-pointer ${
                       isSelected
                         ? 'border-blue-500 bg-blue-500/10'
                         : owner
@@ -168,7 +168,7 @@ export function GameTabs() {
               <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-4">
                 Family Holdings
               </h3>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {families.map((family) => (
                   <div
                     key={family.id}

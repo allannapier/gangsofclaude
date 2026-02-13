@@ -264,11 +264,30 @@ export const useGameStore = create<GameStore>()(
           }));
         }
 
+        // Handle game state updates from server (turn, territory ownership, etc.)
+        if (data.type === 'game_state_update' && data.gameState) {
+          set(state => ({
+            gameState: {
+              ...state.gameState,
+              ...data.gameState,
+            },
+          }));
+        }
+
         // Handle errors (but NOT tool calls - they're internal implementation details)
         if (data.type === 'error') {
           set(state => ({
             claudeOutput: state.claudeOutput + `\n[Error: ${data.message}]\n`,
           }));
+        }
+
+        // Handle turn complete - signal that turn processing is done
+        if (data.type === 'turn_complete') {
+          console.log('[WebSocket] Received turn_complete signal');
+          set({
+            isProcessingTurn: false,
+            processingTurnTarget: null,
+          });
         }
       } catch (e) {
         // Not JSON, append as text

@@ -92,6 +92,7 @@ function readAndBroadcastSaveData() {
               turn: saveData.turn,
               phase: saveData.phase || 'playing',
               families: saveData.families,
+              territoryOwnership: saveData.territoryOwnership || {},
             },
           }));
         }
@@ -144,6 +145,7 @@ const pendingPrompts: string[] = [];
 
 // Track pending next-turn commands to broadcast completion
 const pendingNextTurnRequests = new Set<string>();
+let isNextTurnInProgress = false;
 
 // Start Claude Code CLI process
 async function startCliProcess() {
@@ -397,6 +399,8 @@ Bun.serve({
                     gameState: {
                       turn: saveData.turn,
                       phase: saveData.phase || 'playing',
+                      families: saveData.families,
+                      territoryOwnership: saveData.territoryOwnership || {},
                     },
                   }));
                 }
@@ -429,6 +433,8 @@ Bun.serve({
                     gameState: {
                       turn: saveData.turn,
                       phase: saveData.phase || 'playing',
+                      families: saveData.families,
+                      territoryOwnership: saveData.territoryOwnership || {},
                     },
                   }));
                 }
@@ -537,7 +543,37 @@ Bun.serve({
             // Track if this is a next-turn command
             if (prompt.trim() === '/next-turn') {
               pendingNextTurnRequests.add(requestId);
+              isNextTurnInProgress = true;
               console.log('🎯 Tracking next-turn request:', requestId);
+
+              // Increment turn in save.json before forwarding to CLI
+              // (This is a fallback in case the PreToolUse hook doesn't fire)
+              try {
+                if (existsSync(saveJsonPath)) {
+                  const saveData = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
+                  const currentTurn = saveData.turn || 0;
+                  saveData.turn = currentTurn + 1;
+                  writeFileSync(saveJsonPath, JSON.stringify(saveData, null, 2));
+                  console.log(`🎯 Pre-incremented turn from ${currentTurn} to ${saveData.turn}`);
+
+                  // Broadcast turn update to browsers immediately
+                  for (const [id, client] of browserClients) {
+                    if (client.readyState === WebSocket.OPEN) {
+                      client.send(JSON.stringify({
+                        type: 'game_state_update',
+                        gameState: {
+                          turn: saveData.turn,
+                          phase: saveData.phase || 'playing',
+                          families: saveData.families,
+                          territoryOwnership: saveData.territoryOwnership || {},
+                        },
+                      }));
+                    }
+                  }
+                }
+              } catch (e) {
+                console.error('Error pre-incrementing turn:', e);
+              }
             }
           } catch (e) {
             console.error('Error forwarding to CLI WebSocket:', e);
@@ -608,9 +644,16 @@ Bun.serve({
             // Check if this was a command result - do this BEFORE the continue so we always update state
             if (cliData.type === 'result' || (cliData.subtype === 'success' && cliData.result)) {
               console.log('🎯 Command completed, will update player state from save.json');
-              const isNextTurnResult = cliData.requestId && pendingNextTurnRequests.has(cliData.requestId);
+              // CLI may return request_id (snake_case) or requestId (camelCase)
+              const responseRequestId = cliData.requestId || cliData.request_id;
+              // Check if this is a next-turn result by requestId or by the in-progress flag
+              const isNextTurnResult = (responseRequestId && pendingNextTurnRequests.has(responseRequestId)) ||
+                                       (isNextTurnInProgress && cliData.result && typeof cliData.result === 'string' && cliData.result.includes('Turn'));
               if (isNextTurnResult) {
-                pendingNextTurnRequests.delete(cliData.requestId);
+                if (responseRequestId) {
+                  pendingNextTurnRequests.delete(responseRequestId);
+                }
+                isNextTurnInProgress = false;
                 console.log('🎯 Next-turn command completed, will broadcast turn_complete after updates');
               }
               setTimeout(() => {
@@ -653,6 +696,8 @@ Bun.serve({
                             gameState: {
                               turn: saveData.turn,
                               phase: saveData.phase || 'playing',
+                              families: saveData.families,
+                              territoryOwnership: saveData.territoryOwnership || {},
                             },
                           }));
                         }

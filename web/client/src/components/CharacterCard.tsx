@@ -2,7 +2,7 @@ import { useGameStore } from '../store';
 import { getCharacterById, getFamilyById } from '../data/families';
 
 export function CharacterCard() {
-  const { selectedCharacter, selectedFamily, executeSkill, setDialogSkill } = useGameStore();
+  const { selectedCharacter, setDialogSkill } = useGameStore();
 
   const character = selectedCharacter ? getCharacterById(selectedCharacter) : null;
   const family = character ? getFamilyById(character.family) : null;

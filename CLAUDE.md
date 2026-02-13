@@ -2,6 +2,28 @@
 
 This project is an immersive text-based mafia game built entirely within Claude Code using agents, skills, and hooks, featuring a companion-style web interface for rich gameplay.
 
+Development Notes:
+
+Always test changes in the UI by uisng chrome dev tools mcp
+Always ensure changes have been compiled if required
+Ensure the app is started using npm run dev from the web folder
+
+Tests:
+
+The web UI runs at http://localhost:5174
+
+Do not commit changesd until you have tested them.
+
+After changes we need to thoroughly test the UI, check the following
+
+New Turn: Check the current turn number, click new turn and watch for progressing modal to appear, observe the tun numbers to make sure it progresses and the messages appearing are showing the progress as it happens during the turn. The modal should dissapear at the end
+
+Action: click the action button and make sure we can manually type /status and it runs ok
+Ensure we can select /attack and get the choices modal to decide what we are going to attack
+
+Territories: Make sure the territories map is showing the correct territiotries for each family
+
+
 ## Claude Code Extension Features Guide
 
 ### Skills (`/skill-name`)

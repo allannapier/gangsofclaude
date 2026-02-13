@@ -10,6 +10,7 @@ import { CommandResponseModal } from './components/CommandResponseModal';
 import { TurnProcessingModal } from './components/TurnProcessingModal';
 import { ClaudeOutput } from './components/ClaudeOutput';
 import { ActionDialog } from './components/ActionDialog';
+import { MobileBottomNav } from './components/MobileBottomNav';
 
 function App() {
   const {
@@ -32,9 +33,11 @@ function App() {
     isProcessingTurn,
     processingTurnTarget,
     setIsProcessingTurn,
+    setCommandPaletteOpen,
   } = useGameStore();
 
   const [isOutputExpanded, setIsOutputExpanded] = useState(false);
+  const [mobileActiveTab, setMobileActiveTab] = useState<'game' | 'history' | 'details' | 'actions'>('game');
   const hasRequestedEvents = useRef(false);
   const previousTurnRef = useRef(gameState.turn);
 
@@ -206,11 +209,21 @@ function App() {
     return () => ws.removeEventListener('message', handleMessage);
   }, [ws, setEvents, setCommandResponse, setIsCommandLoading, setIsProcessingTurn, setCommandResponseModalOpen, commandResponseModalOpen]);
 
+  // Handle mobile tab changes
+  const handleMobileTabChange = (tab: 'game' | 'history' | 'details' | 'actions') => {
+    if (tab === 'actions') {
+      setCommandPaletteOpen(true);
+    } else {
+      setMobileActiveTab(tab);
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col bg-zinc-950 text-zinc-100 overflow-hidden">
       <Header />
 
-      <div className="flex-1 flex overflow-hidden">
+      {/* Desktop Layout - Three Columns */}
+      <div className="hidden md:flex flex-1 overflow-hidden">
         {/* Left Column - Turn History */}
         <div className="w-[480px] bg-zinc-900/30 border-r border-zinc-800 flex flex-col">
           <TurnHistoryBrowser
@@ -247,6 +260,56 @@ function App() {
             <DetailsPanel />
           </div>
         </aside>
+      </div>
+
+      {/* Mobile Layout - Single Column with Bottom Nav */}
+      <div className="flex md:hidden flex-1 flex-col overflow-hidden">
+        {/* Mobile Content Area */}
+        <main className="flex-1 overflow-hidden relative">
+          {/* Game Tab */}
+          {mobileActiveTab === 'game' && (
+            <div className="h-full flex flex-col overflow-hidden">
+              <PlayerStats />
+              <div className="flex-1 overflow-hidden">
+                <GameTabs />
+              </div>
+              <div className={`bg-zinc-900/50 border-t border-zinc-800 flex flex-col transition-all duration-300 ${isOutputExpanded ? 'h-[200px]' : 'h-auto'}`}>
+                <ClaudeOutput
+                  isExpanded={isOutputExpanded}
+                  onToggleExpand={() => setIsOutputExpanded(!isOutputExpanded)}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* History Tab */}
+          {mobileActiveTab === 'history' && (
+            <div className="h-full overflow-hidden">
+              <TurnHistoryBrowser
+                events={events}
+                currentTurn={gameState.turn}
+                onTurnChange={setViewingTurn}
+                onRefresh={requestEvents}
+              />
+            </div>
+          )}
+
+          {/* Details Tab */}
+          {mobileActiveTab === 'details' && (
+            <div className="h-full overflow-auto p-4">
+              <div className="pb-4 border-b border-zinc-800 mb-4">
+                <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Details</h2>
+              </div>
+              <DetailsPanel />
+            </div>
+          )}
+        </main>
+
+        {/* Mobile Bottom Navigation */}
+        <MobileBottomNav
+          activeTab={mobileActiveTab}
+          onTabChange={handleMobileTabChange}
+        />
       </div>
 
       {commandPaletteOpen && <CommandPalette />}

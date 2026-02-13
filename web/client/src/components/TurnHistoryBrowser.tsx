@@ -277,7 +277,7 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
         </div>
 
         {/* Filters */}
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 md:flex-wrap scrollbar-hide">
           <Filter className="w-3.5 h-3.5 text-zinc-500 mr-1" />
 
           <select
@@ -448,8 +448,8 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
         )}
       </div>
 
-      {/* Keyboard Hint */}
-      <div className="px-4 py-2 border-t border-zinc-800 bg-zinc-900/30">
+      {/* Keyboard Hint - Desktop Only */}
+      <div className="hidden md:block px-4 py-2 border-t border-zinc-800 bg-zinc-900/30">
         <p className="text-xs text-zinc-600 text-center">
           Use <kbd className="px-1.5 py-0.5 bg-zinc-800 rounded text-zinc-400">←</kbd>
           {' '}<kbd className="px-1.5 py-0.5 bg-zinc-800 rounded text-zinc-400">→</kbd> to navigate turns

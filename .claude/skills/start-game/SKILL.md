@@ -72,6 +72,20 @@ Create/overwrite `.claude/game-state/save.json` with initial state:
     "Falcone": { "territory": 25, "soldiers": 3, "wealth": 5500, "standing": "Strong" },
     "Moretti": { "territory": 25, "soldiers": 3, "wealth": 5200, "standing": "Strong" }
   },
+  "territoryOwnership": {
+    "Little Italy": "marinelli",
+    "North End": "rossetti",
+    "The Docks": "",
+    "Fishmarket": "rossetti",
+    "Warehouse District": "marinelli",
+    "East Harbor": "",
+    "Southside Clubs": "rossetti",
+    "Downtown": "falcone",
+    "Financial District": "falcone",
+    "East Side": "moretti",
+    "Harbor": "moretti",
+    "Old Town": "moretti"
+  },
   "events": [],
   "messages": []
 }

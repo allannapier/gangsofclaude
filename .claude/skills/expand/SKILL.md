@@ -13,9 +13,14 @@ Grow your family's territory and increase income.
 
 ## Usage
 
-`/expand [amount]`
+`/expand [amount] [territory]`
 
 Amount options: small, medium, large
+Territory (optional): Specific territory name to target
+
+If territory is specified and is unowned, it will be claimed.
+If territory is specified and is owned by another family, expansion will target that area.
+If territory is not specified, random expansion occurs.
 
 ## Costs and Benefits
 
@@ -50,8 +55,11 @@ High respect = Better expansion results
 3. Calculate territory gain
 4. Roll for provocation
 5. If provoked: Generate rival response event
-6. Update family territory and player wealth
-7. Save game state
-8. Display results with narrative
+6. **IMPORTANT**: If a specific territory name was provided and expansion succeeds:
+   - Update the `territoryOwnership` map in save.json with the player's family ID as the owner
+   - For random/generic expansion, increment the family's territory count but specific territories in `territoryOwnership` should only be added when explicitly named
+7. Update family territory count and player wealth
+8. Save game state
+9. Display results with narrative
 
 **Restriction:** Only Capo and above can authorize expansion. Soldiers and Associates must get permission.
