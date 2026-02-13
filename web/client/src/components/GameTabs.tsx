@@ -3,6 +3,22 @@ import { useGameStore } from '../store';
 import { getFamilyById, getCharacterById } from '../data/families';
 import { Map, Users, ChevronRight, ClipboardList, CheckCircle2, Clock } from 'lucide-react';
 
+// Map territories to their default controlling families for initial display
+const DEFAULT_TERRITORY_OWNERSHIP: Record<string, string> = {
+  'Little Italy': 'marinelli',
+  'North End': 'rossetti',
+  'The Docks': '',
+  'Fishmarket': 'rossetti',
+  'Warehouse District': 'marinelli',
+  'East Harbor': '',
+  'Southside Clubs': 'rossetti',
+  'Downtown': 'falcone',
+  'Financial District': 'falcone',
+  'East Side': 'moretti',
+  'Harbor': 'moretti',
+  'Old Town': 'moretti',
+};
+
 type TabType = 'territories' | 'families' | 'tasks';
 
 export function GameTabs() {
@@ -27,13 +43,13 @@ export function GameTabs() {
     'East Side', 'Harbor', 'Old Town',
   ];
 
-  const getTerritoryOwner = (territory: string) => {
-    for (const family of families) {
-      if (family.territory.includes(territory)) {
-        return family.id;
-      }
+  const getTerritoryOwner = (territory: string): string | null => {
+    // First check if game state has specific territory tracking
+    if (gameState.territoryOwnership && gameState.territoryOwnership[territory]) {
+      return gameState.territoryOwnership[territory];
     }
-    return null;
+    // Fall back to default ownership
+    return DEFAULT_TERRITORY_OWNERSHIP[territory] || null;
   };
 
   const handleTerritoryClick = (territory: string) => {
