@@ -4,6 +4,7 @@ import { Loader2, Swords, Shield, Crown, UserPlus, Eye, Scroll, MessageSquare, S
 
 interface TurnProcessingModalProps {
   isOpen: boolean;
+  onComplete?: () => void;
 }
 
 interface Action {
@@ -34,30 +35,41 @@ const backgrounds = [
   '/gangs2.png',
 ];
 
-export function TurnProcessingModal({ isOpen }: TurnProcessingModalProps) {
-  const { gameState, events, processingTurnTarget } = useGameStore();
+export function TurnProcessingModal({ isOpen, onComplete }: TurnProcessingModalProps) {
+  const { gameState, events, processingTurnTarget, isProcessingTurn } = useGameStore();
   const [currentAction, setCurrentAction] = useState<Action | null>(null);
   const [progress, setProgress] = useState(0);
   const [actionCount, setActionCount] = useState(0);
   const [currentBgIndex, setCurrentBgIndex] = useState(0);
   const [processingTurn, setProcessingTurn] = useState<number>(gameState.turn);
+  const [isComplete, setIsComplete] = useState(false);
+  const [completedActions, setCompletedActions] = useState<Action[]>([]);
   const lastEventCountRef = useRef(0);
   const seenActionsRef = useRef<Set<string>>(new Set());
   const isFirstOpenRef = useRef(true);
+  const completionRef = useRef(false);
 
   // Track which turn we're processing - capture it on first open
   useEffect(() => {
     if (isOpen && isFirstOpenRef.current) {
-      // Use explicit store target if present, fallback to upcoming turn.
-      let targetTurn = processingTurnTarget ?? (gameState.turn + 1);
+      // The processingTurnTarget is set by the store when /next-turn is executed
+      // It represents the NEXT turn (current turn + 1 from before increment)
+      // gameState.turn has already been incremented by the PreToolUse hook
+      let targetTurn = processingTurnTarget ?? gameState.turn;
       if (targetTurn < 1) targetTurn = 1;
       setProcessingTurn(targetTurn);
+      setIsComplete(false);
+      setCompletedActions([]);
+      completionRef.current = false;
       isFirstOpenRef.current = false;
       console.log('[TurnProcessingModal] Processing turn:', targetTurn, { gameStateTurn: gameState.turn, processingTurnTarget });
     }
 
     if (!isOpen) {
       isFirstOpenRef.current = true;
+      setIsComplete(false);
+      setCompletedActions([]);
+      completionRef.current = false;
     }
   }, [isOpen, gameState.turn, processingTurnTarget]);
 
@@ -71,6 +83,42 @@ export function TurnProcessingModal({ isOpen }: TurnProcessingModalProps) {
 
     return () => clearInterval(interval);
   }, [isOpen]);
+
+  // Detect turn completion - when isProcessingTurn becomes false, the turn is done
+  useEffect(() => {
+    if (isOpen && isProcessingTurn === false && processingTurnTarget !== null && !completionRef.current) {
+      // Turn has completed - show completion state
+      const targetTurnEvents = events.filter(e => e.turn === processingTurn);
+      const actions: Action[] = targetTurnEvents.map(evt => ({
+        actor: evt.actor,
+        action: evt.action,
+        target: evt.target || 'none',
+        description: evt.description || '',
+      }));
+
+      setIsComplete(true);
+      setCompletedActions(actions);
+      setProgress(100);
+      completionRef.current = true;
+
+      console.log('[TurnProcessingModal] Turn complete:', { processingTurn, actionsCount: actions.length });
+
+      // Call completion callback after a short delay to show the summary
+      if (onComplete) {
+        setTimeout(() => {
+          onComplete();
+        }, 3000);
+      }
+    }
+
+    // Reset completion state if modal reopens for a new turn
+    if (isOpen && isProcessingTurn && completionRef.current) {
+      setIsComplete(false);
+      setCompletedActions([]);
+      setProgress(0);
+      completionRef.current = false;
+    }
+  }, [isOpen, isProcessingTurn, processingTurnTarget, processingTurn, events, onComplete]);
 
   // Track new events as they arrive during turn processing
   useEffect(() => {
@@ -93,11 +141,12 @@ export function TurnProcessingModal({ isOpen }: TurnProcessingModalProps) {
       totalEvents: events.length,
       currentTurnEvents: currentTurnEvents.length,
       lastCount: lastEventCountRef.current,
-      processingTurnTarget
+      processingTurnTarget,
+      isComplete,
     });
 
     // Check if we have new events
-    if (currentTurnEvents.length > lastEventCountRef.current) {
+    if (currentTurnEvents.length > lastEventCountRef.current && !isComplete) {
       // Find the newest event (the one we haven't seen yet)
       const newEvents = currentTurnEvents.slice(lastEventCountRef.current);
 
@@ -122,11 +171,11 @@ export function TurnProcessingModal({ isOpen }: TurnProcessingModalProps) {
       lastEventCountRef.current = currentTurnEvents.length;
       setActionCount(currentTurnEvents.length);
 
-      // Calculate progress (assume ~22 actions per turn)
+      // Calculate progress (assume ~22 actions per turn, cap at 95% until complete)
       const progressPercent = Math.min((currentTurnEvents.length / 22) * 100, 95);
       setProgress(progressPercent);
     }
-  }, [events, processingTurn, processingTurnTarget, isOpen]);
+  }, [events, processingTurn, processingTurnTarget, isOpen, isComplete]);
 
   if (!isOpen) return null;
 
@@ -173,57 +222,110 @@ export function TurnProcessingModal({ isOpen }: TurnProcessingModalProps) {
 
         {/* Title */}
         <h2 className="text-2xl font-bold text-zinc-100 mb-2">
-          Processing Turn {processingTurn}
+          {isComplete ? `Turn ${processingTurn} Complete` : `Processing Turn ${processingTurn}`}
         </h2>
         <p className="text-zinc-400 mb-6">
-          The families are making their moves...
+          {isComplete
+            ? 'All families have made their moves.'
+            : 'The families are making their moves...'}
         </p>
 
         {/* Progress Bar */}
         <div className="h-2 bg-zinc-800 rounded-full overflow-hidden mb-6">
           <div
-            className="h-full bg-gradient-to-r from-amber-500 via-red-500 to-amber-500 transition-all duration-500"
+            className={`h-full transition-all duration-500 ${isComplete ? 'bg-gradient-to-r from-green-500 to-emerald-500' : 'bg-gradient-to-r from-amber-500 via-red-500 to-amber-500'}`}
             style={{ width: `${progress}%` }}
           />
         </div>
 
-        {/* Current Action - Shows latest action, replaces previous */}
-        <div className="bg-zinc-800/50 rounded-xl p-4 mb-4 min-h-[120px] flex flex-col justify-center border border-zinc-700/50">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider mb-3">Latest Action</p>
+        {!isComplete ? (
+          <>
+            {/* Current Action - Shows latest action, replaces previous */}
+            <div className="bg-zinc-800/50 rounded-xl p-4 mb-4 min-h-[120px] flex flex-col justify-center border border-zinc-700/50">
+              <p className="text-xs text-zinc-500 uppercase tracking-wider mb-3">Latest Action</p>
 
-          {currentAction ? (
-            <div className="flex items-center justify-center gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center border border-zinc-700">
-                {actionIcon}
+              {currentAction ? (
+                <div className="flex items-center justify-center gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center border border-zinc-700">
+                    {actionIcon}
+                  </div>
+                  <div className="text-left">
+                    <p className="font-semibold text-zinc-200 capitalize text-lg">{actionText}</p>
+                    <p className="text-sm text-amber-400 font-medium">{currentAction.actor}</p>
+                    {currentAction.description && (
+                      <p className="text-xs text-zinc-500 mt-1 line-clamp-2 max-w-[200px]">
+                        {currentAction.description}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center gap-3 text-zinc-500">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Waiting for actions...</span>
+                </div>
+              )}
+            </div>
+
+            {/* Action counter */}
+            <div className="flex items-center justify-center gap-2 text-zinc-400 mb-4">
+              <span className="text-sm">{actionCount} actions processed</span>
+            </div>
+
+            {/* Loading indicator */}
+            <div className="flex items-center justify-center gap-2 text-zinc-400">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm">Please wait...</span>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Completion Summary */}
+            <div className="bg-zinc-800/50 rounded-xl p-4 mb-4 min-h-[120px] flex flex-col justify-center border border-zinc-700/50">
+              <p className="text-xs text-zinc-500 uppercase tracking-wider mb-3">Turn Summary</p>
+
+              <div className="text-center mb-4">
+                <p className="text-3xl font-bold text-green-400 mb-1">{completedActions.length}</p>
+                <p className="text-sm text-zinc-400">actions completed</p>
               </div>
-              <div className="text-left">
-                <p className="font-semibold text-zinc-200 capitalize text-lg">{actionText}</p>
-                <p className="text-sm text-amber-400 font-medium">{currentAction.actor}</p>
-                {currentAction.description && (
-                  <p className="text-xs text-zinc-500 mt-1 line-clamp-2 max-w-[200px]">
-                    {currentAction.description}
-                  </p>
-                )}
+
+              {/* Action breakdown by type */}
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                {(() => {
+                  const actionCounts = completedActions.reduce((acc, a) => {
+                    const type = a.action.split('_')[0]; // Get base action type
+                    acc[type] = (acc[type] || 0) + 1;
+                    return acc;
+                  }, {} as Record<string, number>);
+
+                  const topActions = Object.entries(actionCounts)
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 6);
+
+                  return topActions.map(([type, count]) => (
+                    <div key={type} className="bg-zinc-900/50 rounded px-2 py-1 text-center">
+                      <span className="text-amber-400 font-medium">{count}</span>
+                      <span className="text-zinc-500 ml-1">{type}</span>
+                    </div>
+                  ));
+                })()}
               </div>
             </div>
-          ) : (
-            <div className="flex items-center justify-center gap-3 text-zinc-500">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span>Waiting for actions...</span>
+
+            {/* Success message */}
+            <div className="flex items-center justify-center gap-2 text-green-400 mb-4">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              <span className="text-sm font-medium">Turn complete!</span>
             </div>
-          )}
-        </div>
 
-        {/* Action counter */}
-        <div className="flex items-center justify-center gap-2 text-zinc-400 mb-4">
-          <span className="text-sm">{actionCount} actions processed</span>
-        </div>
-
-        {/* Loading indicator */}
-        <div className="flex items-center justify-center gap-2 text-zinc-400">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span className="text-sm">Please wait...</span>
-        </div>
+            {/* Close instruction */}
+            <p className="text-xs text-zinc-500">
+              Modal will close automatically
+            </p>
+          </>
+        )}
       </div>
     </div>
   );

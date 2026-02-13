@@ -98,21 +98,22 @@ function App() {
     }
   }, [gameState.turn, setViewingTurn, requestEvents]);
 
-  // Hide processing modal when we receive enough events for the turn being processed
+  // Track turn completion - modal closes only when turn_complete signal is received
+  // This ensures we wait for actual turn completion, not just event count
   useEffect(() => {
     if (!isProcessingTurn || processingTurnTarget == null) {
       return;
     }
 
+    // Log current state for debugging
     const targetTurnEvents = events.filter((e) => e.turn === processingTurnTarget);
-    if (targetTurnEvents.length >= 22) {
-      // Give it a moment to show the last action
-      const timer = setTimeout(() => {
-        setIsProcessingTurn(false);
-      }, 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [events, isProcessingTurn, processingTurnTarget, setIsProcessingTurn]);
+    console.log('[App] Turn processing state:', {
+      isProcessingTurn,
+      processingTurnTarget,
+      eventsCount: targetTurnEvents.length,
+      totalEvents: events.length,
+    });
+  }, [events, isProcessingTurn, processingTurnTarget]);
 
   useEffect(() => {
     if (connected && ws && !hasRequestedEvents.current) {
@@ -203,7 +204,7 @@ function App() {
 
     ws.addEventListener('message', handleMessage);
     return () => ws.removeEventListener('message', handleMessage);
-  }, [ws, setEvents, setCommandResponse, setIsCommandLoading]);
+  }, [ws, setEvents, setCommandResponse, setIsCommandLoading, setIsProcessingTurn, setCommandResponseModalOpen, commandResponseModalOpen]);
 
   return (
     <div className="h-screen flex flex-col bg-zinc-950 text-zinc-100 overflow-hidden">
@@ -257,6 +258,10 @@ function App() {
 
       <TurnProcessingModal
         isOpen={isProcessingTurn}
+        onComplete={() => {
+          // Close the modal after completion state is shown (handled internally with delay)
+          setIsProcessingTurn(false);
+        }}
       />
 
       {dialogSkill && <ActionDialog skill={dialogSkill} onClose={() => setDialogSkill(null)} />}

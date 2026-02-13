@@ -141,6 +141,9 @@ let cliProcess: ReturnType<typeof spawn> | null = null;
 let cliStdoutBuffer = '';
 const pendingPrompts: string[] = [];
 
+// Track pending next-turn commands to broadcast completion
+const pendingNextTurnRequests = new Set<string>();
+
 // Start Claude Code CLI process
 async function startCliProcess() {
   if (cliProcess) {
@@ -529,6 +532,12 @@ Bun.serve({
               },
             }) + '\n';
             cliConnection.send(ndjson);
+
+            // Track if this is a next-turn command
+            if (prompt.trim() === '/next-turn') {
+              pendingNextTurnRequests.add(requestId);
+              console.log('🎯 Tracking next-turn request:', requestId);
+            }
           } catch (e) {
             console.error('Error forwarding to CLI WebSocket:', e);
           }
@@ -598,6 +607,11 @@ Bun.serve({
             // Check if this was a command result - do this BEFORE the continue so we always update state
             if (cliData.type === 'result' || (cliData.subtype === 'success' && cliData.result)) {
               console.log('🎯 Command completed, will update player state from save.json');
+              const isNextTurnResult = cliData.requestId && pendingNextTurnRequests.has(cliData.requestId);
+              if (isNextTurnResult) {
+                pendingNextTurnRequests.delete(cliData.requestId);
+                console.log('🎯 Next-turn command completed, will broadcast turn_complete after updates');
+              }
               setTimeout(() => {
                 try {
                   console.log('📁 Reading save.json from:', saveJsonPath);
@@ -656,7 +670,22 @@ Bun.serve({
                         }
                       }
                     }
+
                   } else {
+                    console.log('⚠️ save.json not found at:', saveJsonPath);
+                  }
+
+                  // Broadcast turn_complete signal only if this was a next-turn command
+                  // This must come AFTER all other updates so the client has fresh data
+                  if (isNextTurnResult) {
+                    console.log('🏁 Turn processing complete, broadcasting turn_complete');
+                    broadcastTurnComplete();
+                  }
+                } catch (e) {
+                  console.error('Error reading save.json:', e);
+                }
+              }, 100); // Small delay to ensure file is written
+            }
                     console.log('⚠️ save.json not found at:', saveJsonPath);
                   }
                 } catch (e) {
