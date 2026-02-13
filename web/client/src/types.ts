@@ -2,14 +2,14 @@
  * Game data types for Gangs of Claude
  */
 
-export type FamilyId = 'marinelli' | 'rossetti' | 'falcone' | 'moretti';
+export type FamilyId = 'marinelli' | 'rossetti' | 'falcone' | 'moretti' | 'None';
 
 export interface Family {
   id: FamilyId;
   name: string;
   fullName: string;
   color: string;
-  description: string;
+  description?: string;
   territory: string[];
   members: Character[];
   stats: {
@@ -60,6 +60,7 @@ export interface GameState {
   events: GameEvent[];
   phase: 'setup' | 'playing' | 'ended';
   winner?: FamilyId;
+  territoryOwnership?: Record<string, string>; // Maps territory name to family id
 }
 
 export type SkillCommand =
@@ -72,6 +73,7 @@ export type SkillCommand =
   | 'recruit'
   | 'message'
   | 'expand'
+  | 'claim'
   | 'intel';
 
 export interface Skill {

@@ -1,8 +1,24 @@
 import { useGameStore } from '../store';
-import { getFamilyById } from '../data/families';
+import { FAMILIES, getFamilyById } from '../data/families';
+
+// Map territories to their default controlling families for initial display
+const DEFAULT_TERRITORY_OWNERSHIP: Record<string, string> = {
+  'Little Italy': 'marinelli',
+  'North End': 'rossetti',
+  'The Docks': null as any,
+  'Fishmarket': 'rossetti',
+  'Warehouse District': 'marinelli',
+  'East Harbor': null as any,
+  'Southside Clubs': 'rossetti',
+  'Downtown': 'falcone',
+  'Financial District': 'falcone',
+  'East Side': 'moretti',
+  'Harbor': 'moretti',
+  'Old Town': 'moretti',
+};
 
 export function TerritoryMap() {
-  const { families: storeFamilies, gameState, selectedFamily, selectedTerritory, setSelectedFamily, setDialogSkill, setSelectedTerritory, player } = useGameStore();
+  const { gameState, selectedFamily, selectedTerritory, setSelectedFamily, setDialogSkill, setSelectedTerritory, player } = useGameStore();
 
   const territories = [
     'Little Italy', 'North End', 'The Docks',
@@ -11,17 +27,14 @@ export function TerritoryMap() {
     'East Side', 'Harbor', 'Old Town',
   ];
 
-  // Use families from game state if available, otherwise fall back to store families
-  const families = gameState.families?.length > 0 ? gameState.families : storeFamilies;
-
-  const getTerritoryOwner = (territory: string) => {
-    for (const family of families) {
-      // Check if territory is in this family's owned territories (now an array)
-      if (family.territory && family.territory.includes(territory)) {
-        return family.id;
-      }
+  // Get territory ownership - check game state first, fall back to defaults
+  const getTerritoryOwner = (territory: string): string | null => {
+    // First check if game state has specific territory tracking
+    if (gameState.territoryOwnership && gameState.territoryOwnership[territory]) {
+      return gameState.territoryOwnership[territory];
     }
-    return null;
+    // Fall back to default ownership
+    return DEFAULT_TERRITORY_OWNERSHIP[territory] || null;
   };
 
   const handleTerritoryClick = (territory: string) => {
@@ -87,7 +100,7 @@ export function TerritoryMap() {
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        {families.map((family) => (
+        {FAMILIES.map((family) => (
           <div
             key={family.id}
             onClick={() => setSelectedFamily(family.id)}
