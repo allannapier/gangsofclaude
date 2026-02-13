@@ -233,6 +233,7 @@ function stopCliProcess() {
 
 // Create WebSocket server for browsers
 Bun.serve({
+  hostname: '0.0.0.0',
   port: 3456,
   fetch(req, server) {
     const url = new URL(req.url);
