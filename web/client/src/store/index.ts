@@ -146,7 +146,14 @@ export const useGameStore = create<GameStore>()(
 
         set({ connecting: true });
 
-        const ws = new WebSocket(`ws://localhost:3456/ws?type=browser&session=${state.sessionId}`);
+        // Use current page's hostname for WebSocket connection (supports remote access)
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsHost = window.location.hostname;
+        const wsPort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+        const wsUrl = `${wsProtocol}//${wsHost}:${wsPort}/ws?type=browser&session=${state.sessionId}`;
+
+        console.log('[WebSocket] Connecting to:', wsUrl);
+        const ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
           console.log('WebSocket connected to server');
