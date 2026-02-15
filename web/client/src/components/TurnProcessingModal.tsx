@@ -4,7 +4,7 @@ import { Loader2, Swords, Shield, Crown, UserPlus, Eye, Scroll, MessageSquare, S
 
 interface TurnProcessingModalProps {
   isOpen: boolean;
-  onComplete?: () => void;
+  onClose?: () => void;
 }
 
 interface Action {
@@ -35,7 +35,7 @@ const backgrounds = [
   '/gangs2.png',
 ];
 
-export function TurnProcessingModal({ isOpen, onComplete }: TurnProcessingModalProps) {
+export function TurnProcessingModal({ isOpen, onClose }: TurnProcessingModalProps) {
   const { gameState, events, processingTurnTarget, isProcessingTurn } = useGameStore();
   const [currentAction, setCurrentAction] = useState<Action | null>(null);
   const [progress, setProgress] = useState(0);
@@ -47,7 +47,7 @@ export function TurnProcessingModal({ isOpen, onComplete }: TurnProcessingModalP
   const lastEventCountRef = useRef(0);
   const seenActionsRef = useRef<Set<string>>(new Set());
   const isFirstOpenRef = useRef(true);
-  const completionRef = useRef(false);
+  const hasShownCompletionRef = useRef(false);
 
   // Track which turn we're processing - capture it on first open
   useEffect(() => {
@@ -60,7 +60,6 @@ export function TurnProcessingModal({ isOpen, onComplete }: TurnProcessingModalP
       setProcessingTurn(targetTurn);
       setIsComplete(false);
       setCompletedActions([]);
-      completionRef.current = false;
       isFirstOpenRef.current = false;
       console.log('[TurnProcessingModal] Processing turn:', targetTurn, { gameStateTurn: gameState.turn, processingTurnTarget });
     }
@@ -69,7 +68,6 @@ export function TurnProcessingModal({ isOpen, onComplete }: TurnProcessingModalP
       isFirstOpenRef.current = true;
       setIsComplete(false);
       setCompletedActions([]);
-      completionRef.current = false;
     }
   }, [isOpen, gameState.turn, processingTurnTarget]);
 
@@ -86,7 +84,7 @@ export function TurnProcessingModal({ isOpen, onComplete }: TurnProcessingModalP
 
   // Detect turn completion - when isProcessingTurn becomes false, the turn is done
   useEffect(() => {
-    if (isOpen && isProcessingTurn === false && processingTurnTarget !== null && !completionRef.current) {
+    if (isOpen && isProcessingTurn === false && processingTurnTarget !== null && !hasShownCompletionRef.current) {
       // Turn has completed - show completion state
       const targetTurnEvents = events.filter(e => e.turn === processingTurn);
       const actions: Action[] = targetTurnEvents.map(evt => ({
@@ -99,26 +97,19 @@ export function TurnProcessingModal({ isOpen, onComplete }: TurnProcessingModalP
       setIsComplete(true);
       setCompletedActions(actions);
       setProgress(100);
-      completionRef.current = true;
+      hasShownCompletionRef.current = true;
 
       console.log('[TurnProcessingModal] Turn complete:', { processingTurn, actionsCount: actions.length });
-
-      // Call completion callback after a short delay to show the summary
-      if (onComplete) {
-        setTimeout(() => {
-          onComplete();
-        }, 3000);
-      }
     }
 
     // Reset completion state if modal reopens for a new turn
-    if (isOpen && isProcessingTurn && completionRef.current) {
+    if (isOpen && isProcessingTurn) {
       setIsComplete(false);
       setCompletedActions([]);
       setProgress(0);
-      completionRef.current = false;
+      hasShownCompletionRef.current = false;
     }
-  }, [isOpen, isProcessingTurn, processingTurnTarget, processingTurn, events, onComplete]);
+  }, [isOpen, isProcessingTurn, processingTurnTarget, processingTurn, events]);
 
   // Track new events as they arrive during turn processing
   useEffect(() => {
@@ -183,7 +174,10 @@ export function TurnProcessingModal({ isOpen, onComplete }: TurnProcessingModalP
   const actionText = currentAction ? currentAction.action.replace(/_/g, ' ') : 'Initializing...';
 
   return (
-    <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 overflow-hidden">
+    <div
+      className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 overflow-hidden"
+      onClick={() => isComplete && onClose?.()}
+    >
       {/* Background Images */}
       {backgrounds.map((bg, index) => (
         <div
@@ -321,8 +315,11 @@ export function TurnProcessingModal({ isOpen, onComplete }: TurnProcessingModalP
             </div>
 
             {/* Close instruction */}
-            <p className="text-xs text-zinc-500">
-              Modal will close automatically
+            <p className="text-sm text-zinc-300 flex items-center justify-center gap-2 cursor-pointer hover:text-zinc-100 transition-colors">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7M15 5l-7 7 7-7" />
+              </svg>
+              Click anywhere to close
             </p>
           </>
         )}

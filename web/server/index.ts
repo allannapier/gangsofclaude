@@ -23,6 +23,7 @@ console.log('📁 Save file path:', saveJsonPath);
 
 // Track last known event count to detect changes
 let lastEventCount = 0;
+let lastMessageCount = 0;
 let lastKnownTurn = 0;
 
 // Poll save.json for changes (more reliable than fs.watch)
@@ -78,6 +79,25 @@ function readAndBroadcastSaveData() {
       console.log(`📊 No change in event count`);
     }
 
+    // Check if messages changed
+    const currentMessageCount = saveData.messages?.length || 0;
+    if (currentMessageCount !== lastMessageCount) {
+      console.log(`📋 MESSAGES CHANGED: ${currentMessageCount} messages (was ${lastMessageCount})`);
+      lastMessageCount = currentMessageCount;
+
+      // Extract tasks and send update to all browsers
+      const tasks = extractTasksFromSaveData(saveData);
+      console.log(`📋 Sending tasks update from save.json: ${tasks.length} tasks`);
+      for (const [id, client] of browserClients) {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({
+            type: 'tasks_update',
+            tasks: tasks,
+          }));
+        }
+      }
+    }
+
     // Check if turn changed
     if (saveData.turn !== undefined && saveData.turn !== lastKnownTurn) {
       console.log(`🔄 Turn changed: ${saveData.turn} (was ${lastKnownTurn})`);
@@ -91,7 +111,6 @@ function readAndBroadcastSaveData() {
             gameState: {
               turn: saveData.turn,
               phase: saveData.phase || 'playing',
-              families: saveData.families,
               territoryOwnership: saveData.territoryOwnership || {},
             },
           }));
@@ -969,7 +988,8 @@ function extractTasksFromSaveData(saveData: any): any[] {
       content: msg.content,
       type: msg.type,
       turn: msg.turn,
-      completed: false,
+      completed: msg.status === 'completed',
+      action: msg.action,  // Include executable action data
     }));
 }
 

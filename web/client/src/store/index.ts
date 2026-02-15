@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { SkillCommand, Family, GameState, GameEvent } from '../types';
 import { getCharacterById } from '../data/families';
+import { FAMILIES } from '../data/families';
 
 interface GameStore {
   // Connection state
@@ -73,9 +74,11 @@ interface GameStore {
     type: string;
     turn: number;
     completed: boolean;
+    action?: { skill: string; args: Record<string, any>; };
   }>;
   setTasks: (tasks: any[]) => void;
   completeTask: (taskId: string) => void;
+  executeTask: (taskId: string) => void;
 }
 
 export const useGameStore = create<GameStore>()(
@@ -94,7 +97,11 @@ export const useGameStore = create<GameStore>()(
         winner: undefined,
       } as GameState,
 
-      families: [],  // Will be populated from gameState.families via WebSocket
+      // Initialize with static families data
+      // This ensures families are available for UI display
+      // Game state updates can add dynamic data like territory ownership
+      families: FAMILIES,
+
       player: {
         name: 'Player',
         rank: 'Outsider',
@@ -134,6 +141,17 @@ export const useGameStore = create<GameStore>()(
           t.id === taskId ? { ...t, completed: true } : t
         ),
       })),
+
+      executeTask: (taskId) => {
+        const state = get();
+        const task = state.tasks.find(t => t.id === taskId);
+        if (task?.action) {
+          // Execute the action via executeSkill
+          get().executeSkill(task.action.skill as SkillCommand, task.action.args);
+          // Mark task as completed
+          get().completeTask(taskId);
+        }
+      },
 
       // Actions
       connect: () => {
@@ -274,6 +292,19 @@ export const useGameStore = create<GameStore>()(
           }));
         }
 
+        // Handle tasks updates from server
+        if (data.type === 'tasks_update' && data.tasks) {
+          console.log('[WebSocket] Received tasks update:', data.tasks.length, 'tasks');
+          set(state => {
+            // Merge new tasks with existing ones, avoiding duplicates
+            const existingIds = new Set(state.tasks.map(t => t.id));
+            const newTasks = data.tasks.filter((t: any) => !existingIds.has(t.id));
+            return {
+              tasks: [...state.tasks, ...newTasks],
+            };
+          });
+        }
+
         // Handle errors (but NOT tool calls - they're internal implementation details)
         if (data.type === 'error') {
           set(state => ({
@@ -336,8 +367,8 @@ export const useGameStore = create<GameStore>()(
     const command = `/${skill}${Object.entries(args).map(([_, v]) => ` ${v}`).join(' ')}`;
 
     // Add event to log
-    const character = getCharacterById(args.target || args.recipient);
-    const target = character ? character.fullName : args.recipient || 'System';
+    const character = getCharacterById(args.target || args.recipient || args.character);
+    const target = character ? character.fullName : args.recipient || args.character || 'System';
 
     set(state => ({
       events: [...state.events, {

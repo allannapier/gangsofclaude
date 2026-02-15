@@ -21,6 +21,9 @@ import {
 } from 'lucide-react';
 import { FAMILIES } from '../data/families';
 import type { GameEvent } from '../types';
+import type { ActionDefinition, ActionTarget } from '../types/actions';
+import { getActionsForHistoryEntry } from '../data/actions';
+import { ContextualActionModal } from './ContextualActionModal';
 
 interface TurnHistoryBrowserProps {
   events: GameEvent[];
@@ -118,6 +121,11 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
   const [actionFilter, setActionFilter] = useState<string>('all');
   const [expandedRanks, setExpandedRanks] = useState<Set<string>>(new Set(rankOrder));
 
+  // Action modal state for history entries
+  const [actionModalOpen, setActionModalOpen] = useState(false);
+  const [actionTarget, setActionTarget] = useState<ActionTarget | null>(null);
+  const [availableActions, setAvailableActions] = useState<ActionDefinition[]>([]);
+
   // Update viewing turn when current turn changes
   useEffect(() => {
     setViewingTurn(currentTurn);
@@ -178,7 +186,12 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
 
   const uniqueActions = useMemo(() => {
     const actions = new Set<string>();
-    events.forEach(e => actions.add(e.action));
+    events.forEach(e => {
+      // Only add string actions to avoid runtime errors
+      if (typeof e.action === 'string') {
+        actions.add(e.action);
+      }
+    });
     return Array.from(actions).sort();
   }, [events]);
 
@@ -222,6 +235,24 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
   };
 
   const hasFilters = familyFilter !== 'all' || rankFilter !== 'all' || actionFilter !== 'all';
+
+  const handleEventClick = (event: GameEvent) => {
+    // Get contextual actions based on event content
+    const actions = getActionsForHistoryEntry({
+      type: event.type,
+      description: event.description,
+      action: event.action,
+    });
+
+    setActionTarget({
+      type: 'history',
+      id: event.id,
+      name: `${event.action || 'Event'}`,
+      metadata: { event },
+    });
+    setAvailableActions(actions);
+    setActionModalOpen(true);
+  };
 
   return (
     <div className="flex flex-col h-full bg-zinc-950">
@@ -309,7 +340,7 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
           >
             <option value="all">All Actions</option>
             {uniqueActions.map(action => (
-              <option key={action} value={action}>{action?.replace(/_/g, ' ') || action}</option>
+              <option key={action} value={action}>{typeof action === 'string' ? action.replace(/_/g, ' ') : action}</option>
             ))}
           </select>
 
@@ -393,6 +424,7 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
                       return (
                         <div
                           key={event.id || `${event.turn}-${idx}`}
+                          onClick={() => handleEventClick(event)}
                           className="group flex items-start gap-3 p-3 bg-zinc-900/50 hover:bg-zinc-800/50 border border-zinc-800 hover:border-zinc-700 rounded-lg transition-all cursor-pointer"
                         >
                           {/* Character Avatar */}
@@ -416,7 +448,7 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
                               <span className={`text-xs px-1.5 py-0.5 rounded ${actionColor}`}>
                                 <span className="flex items-center gap-1">
                                   {actionIcon}
-                                  <span className="capitalize">{event.action?.replace(/_/g, ' ') || event.action}</span>
+                                  <span className="capitalize">{typeof event.action === 'string' ? event.action.replace(/_/g, ' ') : event.action}</span>
                                 </span>
                               </span>
                             </div>
@@ -455,6 +487,19 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
           {' '}<kbd className="px-1.5 py-0.5 bg-zinc-800 rounded text-zinc-400">→</kbd> to navigate turns
         </p>
       </div>
+
+      {/* Contextual Action Modal */}
+      <ContextualActionModal
+        isOpen={actionModalOpen}
+        onClose={() => setActionModalOpen(false)}
+        context="history"
+        target={actionTarget}
+        actions={availableActions}
+        onActionComplete={(actionId, target) => {
+          console.log('History action completed:', actionId, target);
+          // Could add additional handling here if needed
+        }}
+      />
     </div>
   );
 }

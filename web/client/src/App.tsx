@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useGameStore } from './store';
 import { Header } from './components/Header';
 import { PlayerStats } from './components/PlayerStats';
@@ -11,6 +11,7 @@ import { TurnProcessingModal } from './components/TurnProcessingModal';
 import { ClaudeOutput } from './components/ClaudeOutput';
 import { ActionDialog } from './components/ActionDialog';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { MobileDebugger } from './components/MobileDebugger';
 
 function App() {
   const {
@@ -20,7 +21,6 @@ function App() {
     connect,
     commandPaletteOpen,
     dialogSkill,
-    setDialogSkill,
     events,
     gameState,
     setViewingTurn,
@@ -38,19 +38,10 @@ function App() {
 
   const [isOutputExpanded, setIsOutputExpanded] = useState(false);
   const [mobileActiveTab, setMobileActiveTab] = useState<'game' | 'history' | 'details' | 'actions'>('game');
-  const hasRequestedEvents = useRef(false);
-  const previousTurnRef = useRef(gameState.turn);
 
   useEffect(() => {
     connect();
   }, [connect]);
-
-  // Reset request flag when websocket reconnects
-  useEffect(() => {
-    if (ws) {
-      hasRequestedEvents.current = false;
-    }
-  }, [ws]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -65,149 +56,185 @@ function App() {
   }, []);
 
   // Request events data from server when connected
-  const requestEvents = useCallback(() => {
-    if (ws?.readyState === WebSocket.OPEN) {
+  const requestEvents = () => {
+    const state = useGameStore.getState();
+    if (state.ws?.readyState === WebSocket.OPEN) {
       console.log('[App] Requesting events...');
-      ws.send(JSON.stringify({
+      state.ws.send(JSON.stringify({
         type: 'request_events',
-        sessionId: useGameStore.getState().sessionId,
+        sessionId: state.sessionId,
       }));
     }
-  }, [ws]);
+  };
 
   // Request tasks data from server when connected
-  const requestTasks = useCallback(() => {
-    if (ws?.readyState === WebSocket.OPEN) {
+  const requestTasks = () => {
+    const state = useGameStore.getState();
+    if (state.ws?.readyState === WebSocket.OPEN) {
       console.log('[App] Requesting tasks...');
-      ws.send(JSON.stringify({
+      state.ws.send(JSON.stringify({
         type: 'request_tasks',
-        sessionId: useGameStore.getState().sessionId,
+        sessionId: state.sessionId,
       }));
     }
-  }, [ws]);
+  };
 
   // Sync viewingTurn with current game turn when it changes
   useEffect(() => {
     setViewingTurn(gameState.turn);
+  }, [gameState.turn]);
 
-    // Detect when a new turn completes (turn number increased)
-    if (gameState.turn > previousTurnRef.current) {
-      previousTurnRef.current = gameState.turn;
-
-      // Request fresh events after a short delay to get the new turn's events
-      setTimeout(() => {
-        requestEvents();
-      }, 500);
-    }
-  }, [gameState.turn, setViewingTurn, requestEvents]);
-
-  // Track turn completion - modal closes only when turn_complete signal is received
-  // This ensures we wait for actual turn completion, not just event count
+  // Handle WebSocket messages
   useEffect(() => {
-    if (!isProcessingTurn || processingTurnTarget == null) {
-      return;
-    }
-
-    // Log current state for debugging
-    const targetTurnEvents = events.filter((e) => e.turn === processingTurnTarget);
-    console.log('[App] Turn processing state:', {
-      isProcessingTurn,
-      processingTurnTarget,
-      eventsCount: targetTurnEvents.length,
-      totalEvents: events.length,
-    });
-  }, [events, isProcessingTurn, processingTurnTarget]);
-
-  useEffect(() => {
-    if (connected && ws && !hasRequestedEvents.current) {
-      hasRequestedEvents.current = true;
-      requestEvents();
-      requestTasks();
-    }
-  }, [connected, ws, requestEvents, requestTasks]);
-
-  // Listen for events data from server
-  useEffect(() => {
-    if (!ws) return;
-
     const handleMessage = (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('[WebSocket] Received:', data.type);
+      const msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
 
-        if (data.type === 'events_update' && data.events) {
-          console.log('[WebSocket] Loading', data.events.length, 'events');
-          // Convert server events to GameEvent format and set all at once
-          const gameEvents = data.events.map((evt: any, idx: number) => ({
-            id: `${evt.turn}-${evt.actor}-${evt.action}-${idx}`,
-            turn: evt.turn,
-            type: evt.type || 'action',
-            actor: evt.actor,
-            action: evt.action,
-            target: evt.target,
-            description: evt.description,
-          }));
-          setEvents(gameEvents);
-        }
+      // Handle content delta from Claude
+      if (msg.type === 'content_delta') {
+        console.log('[App] Content delta:', msg.delta?.text);
+        set(state => ({
+          claudeOutput: state.claudeOutput + (msg.delta?.text || ''),
+        }));
+      }
 
-        if (data.type === 'tasks_update' && data.tasks) {
-          console.log('[WebSocket] Loading', data.tasks.length, 'tasks');
-          useGameStore.getState().setTasks(data.tasks);
-        }
+      // Handle assistant messages - update player state
+      if (msg.type === 'assistant' && msg.message) {
+        const message = msg.message;
+        console.log('[App] Assistant message:', message);
 
-        // Handle action started - show turn processing and update current action
-        if (data.type === 'action_started' && data.action) {
-          console.log('[WebSocket] Action started:', data.action);
-          // If we get an action_started, we're processing a turn
-          setIsProcessingTurn(true);
-          // Close command response modal if it's open
-          if (commandResponseModalOpen) {
-            setCommandResponseModalOpen(false);
+        // Handle family assignment from game responses
+        if (message.content && Array.isArray(message.content)) {
+          const textParts = message.content
+            .filter((c: any) => c.type === 'text')
+            .map((c: any) => c.text)
+            .join('');
+
+          if (textParts) {
+            const familyMatch = textParts.join('').match(/joined the (\w+) Family/i) ||
+                                 textParts.join('').match(/now an? (\w+) of the (\w+) Family/i) ||
+                                 textParts.join('').match(/Family: (\w+)/i);
+            if (familyMatch) {
+              const family = familyMatch[1] || familyMatch[2];
+              if (family) {
+                set(state => ({
+                  player: { ...state.player, family: family.charAt(0).toUpperCase() + family.slice(1) }
+                }));
+              }
+            }
           }
-        }
 
-        // Handle turn processing complete
-        if (data.type === 'turn_complete') {
-          console.log('[WebSocket] Turn complete');
+          // Handle rank updates
+          const rankMatch = textParts.join('').match(/promoted to (\w+)/i);
+          if (rankMatch) {
+            const rank = rankMatch[1];
+            if (rank) {
+              set(state => ({
+                  player: { ...state.player, rank: rank.charAt(0).toUpperCase() + rank.slice(1) }
+                }));
+            }
+          }
+          }
+
+          // Handle wealth updates
+          const wealthMatch = textParts.join('').match(/Wealth: \$(\d+)/);
+          if (wealthMatch) {
+            const wealth = parseInt(wealthMatch[1], 10);
+            if (!isNaN(wealth)) {
+              set(state => ({
+                  player: { ...state.player, wealth }
+                }));
+            }
+          }
+
+          // Handle respect updates
+          const respectMatch = textParts.join('').match(/Respect: (\d+)/);
+          if (respectMatch) {
+            const respect = parseInt(respectMatch[1], 10);
+            if (!isNaN(respect)) {
+              set(state => ({
+                  player: { ...state.player, respect }
+                }));
+            }
+          }
+
+          // Handle loyalty updates
+          const loyaltyMatch = textParts.join('').match(/Loyalty: (\d+)/);
+          if (loyaltyMatch) {
+            const loyalty = parseInt(loyaltyMatch[1], 10);
+            if (!isNaN(loyalty)) {
+              set(state => ({
+                  player: { ...state.player, loyalty }
+                }));
+            }
+          }
+        } else {
           setIsProcessingTurn(false);
         }
 
-        if (data.type === 'game_state_update' && data.gameState) {
-          console.log('[WebSocket] Game state update:', data.gameState);
-          // Update game state including current turn
-          useGameStore.setState(state => ({
-            gameState: {
-              ...state.gameState,
-              ...data.gameState,
-            },
-          }));
-        }
+      // Handle action started - show turn processing and update current action
+      if (msg.type === 'action_started' && msg.action) {
+        console.log('[App] Action started:', msg.action);
+        setIsProcessingTurn(true);
+        processingTurnTarget = msg.action?.target?.metadata?.task ? msg.action.target.metadata.task.id : null;
+      }
 
-        // Capture command responses (content deltas from Claude)
-        if (data.type === 'content_delta') {
-          const text = data.delta?.text || '';
-          if (text) {
-            const currentResponse = useGameStore.getState().commandResponse;
-            setCommandResponse(currentResponse + text);
-          }
-        }
+      // Handle turn complete - signal that turn processing is done
+      if (msg.type === 'turn_complete') {
+        console.log('[App] Turn complete');
+        setIsProcessingTurn(false);
+      }
 
-        // Check for response completion (when we get a stop signal or similar)
-        if (data.type === 'response_complete' || data.type === 'stop') {
-          setIsCommandLoading(false);
+      // Handle status updates
+      if (msg.type === 'status') {
+        console.log('[App] Status:', msg.status);
+
+        if (msg.status === 'connected') {
+          set({ cliConnected: true });
+        } else if (msg.status === 'disconnected' || msg.status === 'waiting_for_cli') {
+          set({ cliConnected: false });
         }
-      } catch (e) {
-        // Not JSON, treat as plain text response
-        if (event.data && typeof event.data === 'string') {
-          const currentResponse = useGameStore.getState().commandResponse;
-          setCommandResponse(currentResponse + event.data);
-        }
+      }
+
+      // Handle player state updates from server (after command completes)
+      if (msg.type === 'player_state_update' && msg.player) {
+        console.log('[App] Player state update:', msg.player);
+        set(state => ({
+          player: {
+            ...state.player,
+            ...msg.player,
+          },
+        }));
+      }
+
+      // Handle game state updates from server (turn, territory ownership, etc.)
+      if (msg.type === 'game_state_update' && msg.gameState) {
+        console.log('[App] Game state update:', msg.gameState);
+        set(state => ({
+          gameState: {
+            ...state.gameState,
+            ...msg.gameState,
+          },
+        }));
+      }
+
+      // Handle events update from server
+      if (msg.type === 'events_update' && msg.events) {
+        console.log('[App] Events update:', msg.events.length, 'events');
+        setEvents(msg.events);
+      }
+
+      // Handle tasks update from server
+      if (msg.type === 'tasks_update' && msg.tasks) {
+        console.log('[App] Tasks update:', msg.tasks.length, 'tasks');
+        set(state => ({
+          tasks: msg.tasks,
+        }));
       }
     };
 
     ws.addEventListener('message', handleMessage);
     return () => ws.removeEventListener('message', handleMessage);
-  }, [ws, setEvents, setCommandResponse, setIsCommandLoading, setIsProcessingTurn, setCommandResponseModalOpen, commandResponseModalOpen]);
+  }, [ws, setEvents]);
 
   // Handle mobile tab changes
   const handleMobileTabChange = (tab: 'game' | 'history' | 'details' | 'actions') => {
@@ -297,38 +324,21 @@ function App() {
           {/* Details Tab */}
           {mobileActiveTab === 'details' && (
             <div className="h-full overflow-auto p-4">
-              <div className="pb-4 border-b border-zinc-800 mb-4">
-                <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Details</h2>
-              </div>
               <DetailsPanel />
             </div>
           )}
         </main>
 
-        {/* Mobile Bottom Navigation */}
+        {/* Mobile Bottom Nav */}
         <MobileBottomNav
           activeTab={mobileActiveTab}
           onTabChange={handleMobileTabChange}
         />
       </div>
 
-      {commandPaletteOpen && <CommandPalette />}
-
-      <CommandResponseModal
-        isOpen={commandResponseModalOpen}
-        onClose={() => setCommandResponseModalOpen(false)}
-      />
-
-      <TurnProcessingModal
-        isOpen={isProcessingTurn}
-        onComplete={() => {
-          // Close the modal after completion state is shown (handled internally with delay)
-          setIsProcessingTurn(false);
-        }}
-      />
-
+      {/* Connection Status Indicator */}
       {dialogSkill && <ActionDialog skill={dialogSkill} onClose={() => setDialogSkill(null)} />}
-
+      <MobileDebugger />
       {(!connected || !cliConnected) && (
         <div className="fixed bottom-4 right-4 bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 max-w-sm">
           <div className="flex items-center gap-3 mb-2">
@@ -343,29 +353,20 @@ function App() {
                connecting ? 'Connecting to server...' : 'Server disconnected'}
             </span>
           </div>
-          {connected && !cliConnected && (
-            <div className="text-xs text-zinc-500 border-t border-zinc-700 pt-2 mt-2">
-              <p className="flex items-center gap-2">
-                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Auto-starting Claude Code CLI...
-              </p>
-            </div>
-          )}
-          {!connected && !connecting && (
-            <button
-              onClick={connect}
-              className="text-xs bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 rounded mt-2 w-full"
-            >
-              Reconnect to Server
-            </button>
-          )}
         </div>
+      )}
+
+      {/* Command Palette */}
+      {commandPaletteOpen && <CommandPalette />}
+
+      {commandResponseModalOpen && (
+        <CommandResponseModal
+          isOpen={commandResponseModalOpen}
+          response={commandResponse}
+          isLoading={isCommandLoading}
+          onClose={() => setCommandResponseModalOpen(false)}
+        />
       )}
     </div>
   );
 }
-
-export default App;

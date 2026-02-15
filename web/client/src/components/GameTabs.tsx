@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { useGameStore } from '../store';
 import { getFamilyById, getCharacterById } from '../data/families';
+import { familyActions, territoryActions, characterActions } from '../data/actions';
+import { ContextualActionModal } from './ContextualActionModal';
+import type { ActionDefinition, ActionTarget } from '../types/actions';
+import type { Character } from '../types';
 import { Map, Users, ChevronRight, ClipboardList, CheckCircle2, Clock } from 'lucide-react';
 
 // Map territories to their default controlling families for initial display
@@ -23,9 +27,17 @@ type TabType = 'territories' | 'families' | 'tasks';
 
 export function GameTabs() {
   const [activeTab, setActiveTab] = useState<TabType>('territories');
+
+  // Action modal state
+  const [actionModalOpen, setActionModalOpen] = useState(false);
+  const [actionContext, setActionContext] = useState<'family' | 'territory' | 'character' | 'history' | 'task' | null>(null);
+  const [actionTarget, setActionTarget] = useState<ActionTarget | null>(null);
+  const [availableActions, setAvailableActions] = useState<ActionDefinition[]>([]);
+
   const {
     families,
     gameState,
+    player,
     selectedFamily,
     setSelectedFamily,
     selectedCharacter,
@@ -34,6 +46,7 @@ export function GameTabs() {
     selectedTerritory,
     tasks,
     completeTask,
+    executeTask,
   } = useGameStore();
 
   const territories = [
@@ -52,25 +65,159 @@ export function GameTabs() {
     return DEFAULT_TERRITORY_OWNERSHIP[territory] || null;
   };
 
+  // Get available actions based on ownership
+  const getTerritoryActions = (_territory: string, ownerId: string | null): ActionDefinition[] => {
+    const allTerritoryActions = Object.values(territoryActions);
+
+    // If territory is unowned
+    if (!ownerId) {
+      return allTerritoryActions.filter(a => a.id === 'territory-claim');
+    }
+
+    // If territory is owned by player's family
+    if (ownerId && player.family.toLowerCase() === ownerId) {
+      return allTerritoryActions.filter(a =>
+        a.id === 'territory-expand' || a.id === 'territory-defend'
+      );
+    }
+
+    // If territory is owned by another family
+    return allTerritoryActions.filter(a =>
+      a.id === 'territory-attack' || a.id === 'territory-spy'
+    );
+  };
+
   const handleTerritoryClick = (territory: string) => {
     const ownerId = getTerritoryOwner(territory);
     setSelectedTerritory(territory);
     setSelectedFamily(ownerId);
     setSelectedCharacter(null);
+
+    // Open action modal with territory actions
+    const actions = getTerritoryActions(territory, ownerId);
+    setActionContext('territory');
+    setActionTarget({
+      type: 'territory',
+      id: territory,
+      name: territory,
+      metadata: { owner: ownerId },
+    });
+    setAvailableActions(actions);
+    setActionModalOpen(true);
+  };
+
+  const getFamilyActions = (familyId: string): ActionDefinition[] => {
+    const allFamilyActions = Object.values(familyActions);
+
+    // If player is outsider, only show seek patronage
+    if (player.rank === 'Outsider') {
+      return allFamilyActions.filter(a => a.id === 'family-seek-patronage');
+    }
+
+    // If it's player's own family
+    if (player.family.toLowerCase() === familyId) {
+      return allFamilyActions.filter(a =>
+        a.id === 'family-message' || a.id === 'family-spy'
+      );
+    }
+
+    // If it's another family
+    return allFamilyActions.filter(a =>
+      a.id === 'family-message' ||
+      a.id === 'family-attack' ||
+      a.id === 'family-spy' ||
+      a.id === 'family-ally'
+    );
   };
 
   const handleFamilyClick = (familyId: string) => {
+    const family = getFamilyById(familyId);
     setSelectedFamily(familyId);
     setSelectedCharacter(null);
     setSelectedTerritory(null);
+
+    // Open action modal with family actions
+    const actions = getFamilyActions(familyId);
+    setActionContext('family');
+    setActionTarget({
+      type: 'family',
+      id: familyId,
+      name: family?.name || familyId,
+      metadata: { familyId },
+    });
+    setAvailableActions(actions);
+    setActionModalOpen(true);
   };
 
-  const handleCharacterClick = (characterId: string) => {
-    setSelectedCharacter(characterId);
-    const char = getCharacterById(characterId);
-    if (char) {
-      setSelectedFamily(char.family);
+  const getCharacterActions = (characterId: string, charObj?: Character): ActionDefinition[] => {
+    // Use passed character object or look up by ID
+    const char = charObj || getCharacterById(characterId);
+    if (!char) return [];
+
+    const allCharActions = Object.values(characterActions);
+
+    // If character is in same family
+    if (player.family.toLowerCase() === char.family) {
+      return allCharActions.filter(a =>
+        a.id === 'character-message' || a.id === 'character-request-help'
+      );
     }
+
+    // If character is outsider (not in any family)
+    if (!char.family || char.family.length === 0) {
+      return allCharActions.filter(a =>
+        a.id === 'character-message' ||
+        a.id === 'character-recruit' ||
+        a.id === 'character-bribe'
+      );
+    }
+
+    // Character is in another family
+    return allCharActions.filter(a =>
+      a.id === 'character-message' ||
+      a.id === 'character-attack' ||
+      a.id === 'character-bribe' ||
+      a.id === 'character-blackmail'
+    );
+  };
+
+  const handleCharacterClick = (member: Character) => {
+    setSelectedCharacter(member.id);
+    setSelectedFamily(member.family);
+
+    // Open action modal with character actions
+    const actions = getCharacterActions(member.id, member);
+    setActionContext('character');
+    setActionTarget({
+      type: 'character',
+      id: member.id,
+      name: member.fullName,
+      metadata: { family: member.family, role: member.role, character: member },
+    });
+    setAvailableActions(actions);
+    setActionModalOpen(true);
+  };
+
+  const handleTaskClick = (task: typeof tasks[0]) => {
+    const taskAction: ActionDefinition = {
+      id: 'task-complete',
+      name: 'Mark Complete',
+      description: 'Mark this task as completed',
+      category: 'task',
+      contexts: ['task'],
+      style: { icon: '✓', color: 'green' },
+      inputs: [],
+    };
+
+    setActionContext('task');
+    setActionTarget({
+      type: 'task',
+      id: task.id,
+      name: 'Task',
+      metadata: { task },
+    });
+    setAvailableActions([taskAction]);
+    setActionModalOpen(true);
   };
 
   return (
@@ -285,7 +432,7 @@ export function GameTabs() {
                       {aliveMembers.map((member) => (
                         <button
                           key={member.id}
-                          onClick={() => handleCharacterClick(member.id)}
+                          onClick={() => handleCharacterClick(member)}
                           className={`w-full p-3 rounded-lg text-left transition-colors flex items-center gap-3 ${
                             selectedCharacter === member.id
                               ? 'bg-zinc-700'
@@ -340,7 +487,8 @@ export function GameTabs() {
                 tasks.filter(t => !t.completed).map((task) => (
                   <div
                     key={task.id}
-                    className="p-4 bg-zinc-900/50 border border-amber-500/30 rounded-lg"
+                    onClick={() => handleTaskClick(task)}
+                    className="p-4 bg-zinc-900/50 border border-amber-500/30 rounded-lg cursor-pointer hover:bg-zinc-800/50 transition-colors"
                   >
                     <div className="flex items-start gap-3">
                       <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
@@ -362,7 +510,20 @@ export function GameTabs() {
                         </p>
                       </div>
                     </div>
-                    <div className="mt-3 flex justify-end">
+                    <div className="mt-3 flex justify-end gap-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            executeTask(task.id);
+                          }}
+                          className="px-3 py-1.5 text-xs bg-blue-900/50 hover:bg-blue-900/70 border border-blue-700 text-blue-300 rounded flex items-center gap-2 transition-colors"
+                          style={{ display: task.action && typeof task.action === 'object' && Object.keys(task.action).length > 0 ? 'flex' : 'none' }}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                          </svg>
+                          Execute
+                        </button>
                       <button
                         onClick={() => completeTask(task.id)}
                         className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded flex items-center gap-2 transition-colors"
@@ -413,6 +574,20 @@ export function GameTabs() {
           </div>
         ) : null}
       </div>
+
+      {/* Contextual Action Modal */}
+      <ContextualActionModal
+        isOpen={actionModalOpen}
+        onClose={() => setActionModalOpen(false)}
+        context={actionContext}
+        target={actionTarget}
+        actions={availableActions}
+        onActionComplete={(_actionId, target) => {
+          if (actionContext === 'task' && target?.metadata?.task) {
+            completeTask(target.metadata.task.id);
+          }
+        }}
+      />
     </div>
   );
 }

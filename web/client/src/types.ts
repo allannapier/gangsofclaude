@@ -83,3 +83,22 @@ export interface Skill {
   arguments?: { name: string; hint: string; options?: string[] }[];
   category: 'core' | 'action' | 'social';
 }
+
+// Message type for game state messages/orders
+export interface Message {
+  id: string;
+  turn: number;
+  from: string;      // Character name
+  to: string;        // 'Player' or character name
+  type: 'message' | 'order';
+  content: string;    // Human-readable description
+  action?: {         // For executable orders
+    skill: string;   // 'attack', 'expand', 'recruit', etc.
+    args: Record<string, any>;  // target, type, etc.
+  };
+  status?: 'pending' | 'completed' | 'failed';
+  timestamp: number;
+}
+
+// Re-export action types for convenience
+export * from './types/actions';
