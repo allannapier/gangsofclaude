@@ -443,7 +443,7 @@ export const useGameStore = create<GameStore>()(
 
     // Add event to log
     const character = getCharacterById(args.target || args.recipient || args.character);
-    const target = character ? character.fullName : args.recipient || args.character || 'System';
+    const target = character ? character.fullName : args.target || args.recipient || args.character || 'System';
 
     // Add local event for non-next-turn commands (next-turn events come from the engine)
     if (skill !== 'next-turn') {

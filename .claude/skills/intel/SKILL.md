@@ -36,6 +36,7 @@ Conduct espionage and information gathering operations.
    - Cost: 25 wealth
    - Effect: Reveal target's wealth, territory, soldier count
    - Risk: Minimal
+   - Target: Can be a character, family name, or territory owner
 
 ## Rank Restrictions
 
