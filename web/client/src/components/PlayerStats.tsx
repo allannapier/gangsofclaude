@@ -9,14 +9,15 @@ function getSuggestedAction(player: { rank: string; family: string; wealth: numb
   if (!playerActedThisTurn && player.wealth >= 10) {
     if (player.respect < 10) return { text: '🕵️ Gather intel to build respect', action: 'intel' };
     if (player.wealth >= 50) return { text: '📍 Expand your territory', action: 'expand' };
+    if (player.wealth >= 25) return { text: '📍 Claim unclaimed territory ($25)', action: 'claim' };
     return { text: '⚔️ Take action before ending turn', action: null };
   }
-  if (player.wealth < 10) return { text: '💰 Low on funds — recruit or expand', action: null };
+  if (player.wealth < 10) return { text: '💰 Low on funds — advance turns to earn income', action: null };
   return null;
 }
 
 export function PlayerStats() {
-  const { player, events, gameState, executeSkill, setDialogSkill, setCommandPaletteOpen, isProcessingTurn } = useGameStore();
+  const { player, events, gameState, executeSkill, setDialogSkill, setCommandPaletteOpen, isProcessingTurn, lastIncomeReport } = useGameStore();
   const [showNextTurnConfirm, setShowNextTurnConfirm] = useState(false);
   const isOutsider = player.rank === 'Outsider' || player.family === 'None';
 
@@ -56,7 +57,14 @@ export function PlayerStats() {
           </div>
           <div className="flex-shrink-0">
             <span className="text-[10px] md:text-xs text-zinc-500">Wealth</span>
-            <p className="text-sm md:text-base font-semibold text-green-400">${player.wealth.toLocaleString()}</p>
+            <p className="text-sm md:text-base font-semibold text-green-400">
+              ${player.wealth.toLocaleString()}
+              {lastIncomeReport && lastIncomeReport.total > 0 && (
+                <span className="text-[10px] md:text-xs text-green-600 ml-1" title={lastIncomeReport.description}>
+                  +${lastIncomeReport.total}/turn
+                </span>
+              )}
+            </p>
           </div>
           <div className="flex-shrink-0">
             <span className="text-[10px] md:text-xs text-zinc-500">Respect</span>

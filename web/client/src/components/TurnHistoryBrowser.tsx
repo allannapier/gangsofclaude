@@ -130,6 +130,7 @@ function getEventOutcome(event: GameEvent): { label: string; color: string } | n
 }
 
 function formatDescription(desc: string): string {
+  if (!desc) return '';
   // Clean up generic descriptions like "Actor (family Rank) - action action"
   return desc
     .replace(/\((\w+)\s+(Associate|Soldier|Capo|Consigliere|Underboss|Don)\)/g, '($2)')

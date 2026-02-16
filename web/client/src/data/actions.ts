@@ -106,17 +106,18 @@ export const familySpyAction: ActionDefinition = {
 export const familyAllyAction: ActionDefinition = {
   id: 'family-ally',
   name: 'Propose Alliance',
-  description: 'Suggest a formal alliance between families',
+  description: 'Send an alliance proposal to this family\'s leadership',
   category: 'social',
   contexts: ['family'],
+  skillCommand: 'message',
   style: { icon: '🤝', color: 'green' },
   inputs: [
     {
-      name: 'terms',
+      name: 'content',
       label: 'Alliance Terms',
       type: 'textarea',
       required: true,
-      placeholder: 'Describe what you offer and what you ask...',
+      placeholder: 'I propose we form an alliance. We offer... and in return we ask...',
     },
   ],
   conditions: [
@@ -151,20 +152,13 @@ export const familySeekPatronageAction: ActionDefinition = {
 export const familyBetrayAction: ActionDefinition = {
   id: 'family-betray',
   name: 'Betray Family',
-  description: 'Switch allegiance to this family',
+  description: 'Switch allegiance to this family (not yet available)',
   category: 'social',
   contexts: ['family'],
   style: { icon: '🐍', color: 'gray' },
-  inputs: [
-    {
-      name: 'confirm',
-      label: 'This will make you an enemy of your current family. Are you sure?',
-      type: 'confirm',
-      required: true,
-    },
-  ],
+  inputs: [],
   conditions: [
-    { type: 'rank', operator: 'ne', value: 'Outsider', message: 'Must be in a family to betray it' },
+    { type: 'rank', operator: 'eq', value: '__never__', message: 'Betrayal is not yet available' },
   ],
   targetRequired: true,
 };
@@ -176,26 +170,15 @@ export const familyBetrayAction: ActionDefinition = {
 export const territoryClaimAction: ActionDefinition = {
   id: 'territory-claim',
   name: 'Claim',
-  description: 'Claim this unowned territory for your family',
+  description: 'Claim this unowned territory for your family (Cost: $25)',
   category: 'territory',
   contexts: ['territory'],
   skillCommand: 'claim',
   style: { icon: '🏴', color: 'green' },
-  inputs: [
-    {
-      name: 'investment',
-      label: 'Investment Level',
-      type: 'select',
-      required: true,
-      options: [
-        { value: 'small', label: 'Small ($1,000)', description: 'Low risk, slow growth' },
-        { value: 'medium', label: 'Medium ($5,000)', description: 'Balanced approach' },
-        { value: 'large', label: 'Large ($15,000)', description: 'High risk, fast takeover' },
-      ],
-    },
-  ],
+  inputs: [],
   conditions: [
     { type: 'rank', operator: 'ne', value: 'Outsider', message: 'Must be in a family to claim territory' },
+    { type: 'wealth', operator: 'gte', value: 25, message: 'Need at least $25 to claim territory' },
   ],
   targetRequired: true,
 };
@@ -215,14 +198,15 @@ export const territoryExpandAction: ActionDefinition = {
       type: 'select',
       required: true,
       options: [
-        { value: 'small', label: 'Small', description: '$1,000 - Low risk' },
-        { value: 'medium', label: 'Medium', description: '$5,000 - Medium risk' },
-        { value: 'large', label: 'Large', description: '$15,000 - High risk' },
+        { value: 'small', label: 'Small ($50)', description: '+1-3 territory, 10% rival notice' },
+        { value: 'medium', label: 'Medium ($150)', description: '+4-7 territory, 30% rival notice' },
+        { value: 'large', label: 'Large ($400)', description: '+8-15 territory, 60% rival notice' },
       ],
     },
   ],
   conditions: [
     { type: 'rank', operator: 'ne', value: 'Outsider', message: 'Must be in a family to expand' },
+    { type: 'wealth', operator: 'gte', value: 50, message: 'Need at least $50 for smallest expansion' },
   ],
   targetRequired: true,
 };
@@ -230,25 +214,13 @@ export const territoryExpandAction: ActionDefinition = {
 export const territoryDefendAction: ActionDefinition = {
   id: 'territory-defend',
   name: 'Defend',
-  description: 'Fortify this territory against attacks',
+  description: 'Fortify this territory against attacks (not yet available)',
   category: 'territory',
   contexts: ['territory'],
   style: { icon: '🛡️', color: 'cyan' },
-  inputs: [
-    {
-      name: 'investment',
-      label: 'Defense Investment',
-      type: 'select',
-      required: true,
-      options: [
-        { value: 'light', label: 'Light ($500)', description: 'Basic security' },
-        { value: 'heavy', label: 'Heavy ($2,000)', description: 'Fortified positions' },
-        { value: 'extreme', label: 'Extreme ($5,000)', description: 'Maximum security' },
-      ],
-    },
-  ],
+  inputs: [],
   conditions: [
-    { type: 'rank', operator: 'ne', value: 'Outsider', message: 'Must be in a family to defend territory' },
+    { type: 'rank', operator: 'eq', value: '__never__', message: 'Territory defense is not yet available' },
   ],
   targetRequired: true,
 };
@@ -383,26 +355,15 @@ export const characterBribeAction: ActionDefinition = {
   description: 'Offer money to gain their favor or cooperation',
   category: 'economic',
   contexts: ['character'],
+  skillCommand: 'message',
   style: { icon: '💰', color: 'amber' },
   inputs: [
     {
-      name: 'amount',
-      label: 'Bribe Amount',
-      type: 'select',
-      required: true,
-      options: [
-        { value: 'small', label: '$500', description: 'Small favor' },
-        { value: 'medium', label: '$2,000', description: 'Significant request' },
-        { value: 'large', label: '$5,000', description: 'Major favor' },
-        { value: 'massive', label: '$10,000', description: 'Betrayal-level' },
-      ],
-    },
-    {
-      name: 'request',
-      label: 'What do you want in return?',
+      name: 'content',
+      label: 'Bribe Offer',
       type: 'textarea',
       required: true,
-      placeholder: 'Describe what you are asking for...',
+      placeholder: 'I have a business proposition... I can offer $X in exchange for...',
     },
   ],
   targetRequired: true,
@@ -411,26 +372,14 @@ export const characterBribeAction: ActionDefinition = {
 export const characterBlackmailAction: ActionDefinition = {
   id: 'character-blackmail',
   name: 'Blackmail',
-  description: 'Use their secrets against them',
+  description: 'Gather compromising info on this character (Cost: $75)',
   category: 'espionage',
   contexts: ['character'],
   skillCommand: 'intel',
   style: { icon: '📸', color: 'purple' },
-  inputs: [
-    {
-      name: 'type',
-      label: 'Blackmail Type',
-      type: 'select',
-      required: true,
-      options: [
-        { value: 'demand', label: '💰 Demand Payment', description: 'Extract money' },
-        { value: 'coerce', label: '🎭 Force Cooperation', description: 'Make them work for you' },
-        { value: 'expose', label: '📢 Threaten Exposure', description: 'Gain leverage' },
-      ],
-    },
-  ],
+  inputs: [],
   conditions: [
-    { type: 'custom', operator: 'eq', value: 'has_intel', message: 'You need dirt on them first' },
+    { type: 'rank', operator: 'gte', value: 'Capo', message: 'Must be Capo or higher to blackmail' },
   ],
   targetRequired: true,
 };
@@ -441,26 +390,15 @@ export const characterRequestHelpAction: ActionDefinition = {
   description: 'Ask this family member for assistance',
   category: 'social',
   contexts: ['character'],
+  skillCommand: 'message',
   style: { icon: '🆘', color: 'cyan' },
   inputs: [
     {
-      name: 'type',
-      label: 'Type of Help',
-      type: 'select',
-      required: true,
-      options: [
-        { value: 'backup', label: '👥 Backup', description: 'Soldiers for a job' },
-        { value: 'money', label: '💰 Loan', description: 'Financial assistance' },
-        { value: 'info', label: '📊 Information', description: 'Intel or contacts' },
-        { value: 'protection', label: '🛡️ Protection', description: 'Protection from enemies' },
-      ],
-    },
-    {
-      name: 'details',
-      label: 'Details',
+      name: 'content',
+      label: 'Your Request',
       type: 'textarea',
       required: true,
-      placeholder: 'Explain what you need and why...',
+      placeholder: 'I need your help with... (backup, money, info, protection)',
     },
   ],
   conditions: [
@@ -476,53 +414,40 @@ export const characterRequestHelpAction: ActionDefinition = {
 export const historyBuyArmsAction: ActionDefinition = {
   id: 'history-buy-arms',
   name: 'Buy Arms',
-  description: 'Purchase weapons from the arms dealer',
+  description: 'Purchase weapons from the arms dealer (not yet available)',
   category: 'economic',
   contexts: ['history'],
   style: { icon: '🔫', color: 'red' },
-  inputs: [
-    {
-      name: 'package',
-      label: 'Weapon Package',
-      type: 'select',
-      required: true,
-      options: [
-        { value: 'small', label: 'Street Kit ($1,000)', description: 'Basic protection' },
-        { value: 'crew', label: 'Crew Arsenal ($5,000)', description: 'Equip your soldiers' },
-        { value: 'war', label: 'War Chest ($15,000)', description: 'Full combat readiness' },
-      ],
-    },
+  inputs: [],
+  conditions: [
+    { type: 'rank', operator: 'eq', value: '__never__', message: 'Arms dealing is not yet available' },
   ],
 };
 
 export const historyAttackDealerAction: ActionDefinition = {
   id: 'history-attack-dealer',
   name: 'Attack Dealer',
-  description: 'Rob the arms dealer instead of buying',
+  description: 'Rob the arms dealer (not yet available)',
   category: 'combat',
   contexts: ['history'],
   style: { icon: '💀', color: 'red' },
-  inputs: [
-    {
-      name: 'approach',
-      label: 'Approach',
-      type: 'select',
-      required: true,
-      options: [
-        { value: 'stealth', label: '🥷 Stealth', description: 'Sneak attack' },
-        { value: 'overwhelming', label: '💥 Overwhelming Force', description: 'Full assault' },
-      ],
-    },
+  inputs: [],
+  conditions: [
+    { type: 'rank', operator: 'eq', value: '__never__', message: 'Not yet available' },
   ],
 };
 
 export const historyReportDealerAction: ActionDefinition = {
   id: 'history-report-dealer',
   name: 'Report to Police',
-  description: 'Tip off the police about the dealer',
+  description: 'Tip off the police about the dealer (not yet available)',
   category: 'espionage',
   contexts: ['history'],
   style: { icon: '👮', color: 'blue' },
+  inputs: [],
+  conditions: [
+    { type: 'rank', operator: 'eq', value: '__never__', message: 'Not yet available' },
+  ],
 };
 
 export const historyCounterAttackAction: ActionDefinition = {
@@ -548,46 +473,72 @@ export const historySpyOnRivalAction: ActionDefinition = {
 export const historyAlertFamilyAction: ActionDefinition = {
   id: 'history-alert-family',
   name: 'Alert Family',
-  description: 'Warn your family about the threat',
+  description: 'Warn your family about this situation',
   category: 'social',
   contexts: ['history'],
+  skillCommand: 'message',
   style: { icon: '⚠️', color: 'amber' },
+  inputs: [
+    {
+      name: 'content',
+      label: 'Alert Message',
+      type: 'textarea',
+      required: true,
+      placeholder: 'I need to warn you about...',
+    },
+  ],
 };
 
 export const historySeizeOpportunityAction: ActionDefinition = {
   id: 'history-seize-opportunity',
   name: 'Seize Opportunity',
-  description: 'Take advantage of this situation',
+  description: 'Take advantage of this situation (not yet available)',
   category: 'economic',
   contexts: ['history'],
   style: { icon: '🎯', color: 'green' },
+  inputs: [],
+  conditions: [
+    { type: 'rank', operator: 'eq', value: '__never__', message: 'Not yet available' },
+  ],
 };
 
 export const historyPassToFamilyAction: ActionDefinition = {
   id: 'history-pass-opportunity',
   name: 'Pass to Family',
-  description: 'Let your family leadership handle it',
+  description: 'Let your family leadership handle it (not yet available)',
   category: 'social',
   contexts: ['history'],
   style: { icon: '🏠', color: 'blue' },
+  inputs: [],
+  conditions: [
+    { type: 'rank', operator: 'eq', value: '__never__', message: 'Not yet available' },
+  ],
 };
 
 export const historyDeclineOpportunityAction: ActionDefinition = {
   id: 'history-decline-opportunity',
   name: 'Decline',
-  description: 'Pass on this opportunity',
+  description: 'Pass on this opportunity (not yet available)',
   category: 'social',
   contexts: ['history'],
   style: { icon: '✋', color: 'gray', variant: 'ghost' },
+  inputs: [],
+  conditions: [
+    { type: 'rank', operator: 'eq', value: '__never__', message: 'Not yet available' },
+  ],
 };
 
 export const historyDefendAgainstAction: ActionDefinition = {
   id: 'history-defend',
   name: 'Defend',
-  description: 'Prepare defenses against the threat',
+  description: 'Prepare defenses against the threat (not yet available)',
   category: 'combat',
   contexts: ['history'],
   style: { icon: '🛡️', color: 'cyan' },
+  inputs: [],
+  conditions: [
+    { type: 'rank', operator: 'eq', value: '__never__', message: 'Not yet available' },
+  ],
 };
 
 export const historyRetaliateAction: ActionDefinition = {
@@ -603,10 +554,14 @@ export const historyRetaliateAction: ActionDefinition = {
 export const historyHideAction: ActionDefinition = {
   id: 'history-hide',
   name: 'Hide',
-  description: 'Go into hiding to avoid the threat',
+  description: 'Go into hiding to avoid the threat (not yet available)',
   category: 'espionage',
   contexts: ['history'],
   style: { icon: '🌑', color: 'gray' },
+  inputs: [],
+  conditions: [
+    { type: 'rank', operator: 'eq', value: '__never__', message: 'Not yet available' },
+  ],
 };
 
 // ============================================================================

@@ -329,7 +329,16 @@ export function useActionState(): UseActionStateReturn {
         // Map input values to skill arguments
         switch (action.skillCommand) {
           case 'message':
-            args.recipient = inputs.recipient || inputs.target || modalState.target?.id;
+            // For family context (ally proposals), use family name as recipient
+            // Claude will interpret and route to the right character
+            if (modalState.context === 'family') {
+              args.recipient = modalState.target?.id;
+            } else if (action.id === 'history-alert-family') {
+              // Alert family: send to player's own family leadership
+              args.recipient = player.family?.toLowerCase() || modalState.target?.id;
+            } else {
+              args.recipient = inputs.recipient || inputs.target || modalState.target?.id;
+            }
             args.content = inputs.content || inputs.message || 'Action from game interface';
             break;
           case 'attack':
@@ -348,7 +357,12 @@ export function useActionState(): UseActionStateReturn {
             } else {
               args.target = inputs.target || modalState.target?.id;
             }
-            args.type = inputs.type || inputs.focus;
+            // For blackmail action, force 'blackmail' as the operation type
+            if (action.id === 'character-blackmail') {
+              args.type = 'blackmail';
+            } else {
+              args.type = inputs.type || inputs.focus;
+            }
             break;
           case 'recruit':
             args.target = inputs.target || modalState.target?.id;

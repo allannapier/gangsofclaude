@@ -47,6 +47,7 @@ interface GameStore {
   isProcessingTurn: boolean;
   processingTurnTarget: number | null;
   setIsProcessingTurn: (processing: boolean) => void;
+  lastIncomeReport: any | null;
 
   // Actions
   connect: () => void;
@@ -135,6 +136,7 @@ export const useGameStore = create<GameStore>()(
       // Turn processing
       isProcessingTurn: false,
       processingTurnTarget: null,
+      lastIncomeReport: null,
 
       // Tasks
       tasks: [],
@@ -386,6 +388,15 @@ export const useGameStore = create<GameStore>()(
             isProcessingTurn: false,
             processingTurnTarget: null,
           });
+        }
+
+        // Handle income report after turn
+        if (data.type === 'income_report' && data.income) {
+          console.log('[WebSocket] Income report:', data.income);
+          set({ lastIncomeReport: data.income });
+          if (data.income.total > 0) {
+            get().addToast('success', `💰 Turn income: +$${data.income.total} (${data.income.description})`);
+          }
         }
 
         // Handle command complete - signal that non-turn command is done

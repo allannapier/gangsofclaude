@@ -11,6 +11,7 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { writeFileSync, readFileSync, existsSync, watch } from 'fs';
+import { calculateTurnIncome, calculateActionReward } from './mechanics';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -776,6 +777,55 @@ Bun.serve({
 
                   } else {
                     console.log('⚠️ save.json not found at:', saveJsonPath);
+                  }
+
+                  // Apply turn income BEFORE broadcasting completion
+                  if (isNextTurnResult && existsSync(saveJsonPath)) {
+                    try {
+                      const incomeState = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
+                      if (incomeState.player && incomeState.player.family && incomeState.player.family !== 'none') {
+                        const familyKey = Object.keys(incomeState.families || {}).find(
+                          k => k.toLowerCase() === incomeState.player.family.toLowerCase()
+                        );
+                        const family = familyKey ? incomeState.families[familyKey] : null;
+                        const ownership = incomeState.territoryOwnership || {};
+                        const territoryCount = Object.values(ownership).filter(
+                          (v: any) => v && v.toLowerCase() === incomeState.player.family.toLowerCase()
+                        ).length;
+
+                        const income = calculateTurnIncome(incomeState.player, family, territoryCount);
+                        if (income.total > 0) {
+                          incomeState.player.wealth = (incomeState.player.wealth || 0) + income.total;
+                          // Log income as an event
+                          if (!incomeState.events) incomeState.events = [];
+                          incomeState.events.push({
+                            turn: incomeState.turn,
+                            actor: 'System',
+                            action: 'income',
+                            target: incomeState.player.family,
+                            result: `💰 Turn income: $${income.total} (${income.description})`,
+                            outcome: 'success',
+                          });
+                          writeFileSync(saveJsonPath, JSON.stringify(incomeState, null, 2));
+                          console.log(`💰 Applied turn income: $${income.total} → player now has $${incomeState.player.wealth}`);
+                          // Re-broadcast updated player state with new wealth
+                          for (const [id, client] of browserClients) {
+                            if (client.readyState === WebSocket.OPEN) {
+                              client.send(JSON.stringify({
+                                type: 'player_state_update',
+                                player: incomeState.player,
+                              }));
+                              client.send(JSON.stringify({
+                                type: 'income_report',
+                                income: income,
+                              }));
+                            }
+                          }
+                        }
+                      }
+                    } catch (incomeErr) {
+                      console.error('Error applying turn income:', incomeErr);
+                    }
                   }
 
                   // Broadcast completion signals AFTER all state updates
