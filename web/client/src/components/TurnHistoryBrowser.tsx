@@ -109,6 +109,34 @@ function getFamilyColor(familyId: string): string {
   return family?.color || '#6b7280';
 }
 
+function getEventOutcome(event: GameEvent): { label: string; color: string } | null {
+  const desc = (event.description || '').toLowerCase();
+  const action = (event.action || '').toLowerCase();
+  const type = (event.type || '').toLowerCase();
+
+  // Explicit success/failure indicators
+  if (action === 'success' || type === 'patronage') return { label: '✓ Success', color: 'text-green-400 bg-green-500/10' };
+  if (desc.includes('success')) return { label: '✓ Success', color: 'text-green-400 bg-green-500/10' };
+  if (desc.includes('fail') || desc.includes('discovered') || desc.includes('caught')) return { label: '✗ Failed', color: 'text-red-400 bg-red-500/10' };
+  if (desc.includes('blocked') || desc.includes('denied') || desc.includes('refused')) return { label: '⊘ Blocked', color: 'text-orange-400 bg-orange-500/10' };
+
+  // Action-type hints
+  if (['attack', 'plan_attack', 'eliminate'].includes(action)) return { label: '⚔', color: 'text-red-400 bg-red-500/10' };
+  if (['expand', 'recruit', 'train'].includes(action)) return { label: '↑', color: 'text-green-400 bg-green-500/10' };
+  if (['guard', 'prepare_defense', 'support'].includes(action)) return { label: '🛡', color: 'text-cyan-400 bg-cyan-500/10' };
+  if (['scout', 'surveillance', 'gather_intel', 'investigate', 'analyze'].includes(action)) return { label: '👁', color: 'text-purple-400 bg-purple-500/10' };
+
+  return null;
+}
+
+function formatDescription(desc: string): string {
+  // Clean up generic descriptions like "Actor (family Rank) - action action"
+  return desc
+    .replace(/\((\w+)\s+(Associate|Soldier|Capo|Consigliere|Underboss|Don)\)/g, '($2)')
+    .replace(/\s*-\s*(\w+)\s+action$/, '')
+    .replace(/,\s*Target:\s*/g, ' → ');
+}
+
 function getRankFromActor(actorName: string): string {
   const char = getCharacterFromActor(actorName);
   return char?.role || 'Player';
@@ -420,12 +448,15 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
                       const actionIcon = actionIcons[event.action] || actionIcons.default;
                       const actionColor = actionColors[event.action] || actionColors.default;
                       const initials = isPlayer ? 'ME' : (event.actor || 'Unknown').split(' ').map(n => n[0]).join('').substring(0, 2);
+                      const outcome = getEventOutcome(event);
 
                       return (
                         <div
                           key={event.id || `${event.turn}-${idx}`}
                           onClick={() => handleEventClick(event)}
-                          className="group flex items-start gap-3 p-3 bg-zinc-900/50 hover:bg-zinc-800/50 border border-zinc-800 hover:border-zinc-700 rounded-lg transition-all cursor-pointer"
+                          className={`group flex items-start gap-3 p-3 bg-zinc-900/50 hover:bg-zinc-800/50 border rounded-lg transition-all cursor-pointer ${
+                            isPlayer ? 'border-emerald-800/40 hover:border-emerald-700/60' : 'border-zinc-800 hover:border-zinc-700'
+                          }`}
                         >
                           {/* Character Avatar */}
                           <div
@@ -443,19 +474,30 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
                               <span className="font-semibold text-zinc-200 truncate">
-                                {event.actor}
+                                {isPlayer ? '👤 You' : event.actor}
                               </span>
                               <span className={`text-xs px-1.5 py-0.5 rounded ${actionColor}`}>
                                 <span className="flex items-center gap-1">
                                   {actionIcon}
-                                  <span className="capitalize">{typeof event.action === 'string' ? event.action.replace(/_/g, ' ') : event.action}</span>
+                                  <span className="capitalize">{typeof event.action === 'string' ? event.action.replace(/_/g, ' ') : (event.action && typeof event.action === 'object' ? (event.action as any).skill || JSON.stringify(event.action) : String(event.action))}</span>
                                 </span>
                               </span>
+                              {outcome && (
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${outcome.color}`}>
+                                  {outcome.label}
+                                </span>
+                              )}
                             </div>
 
                             <p className="text-sm text-zinc-400 leading-relaxed">
-                              {event.description}
+                              {formatDescription(event.description)}
                             </p>
+
+                            {event.result && (
+                              <p className="text-xs text-zinc-500 mt-1 italic">
+                                {event.result}
+                              </p>
+                            )}
 
                             {event.target && event.target !== 'none' && (
                               <div className="mt-1.5 flex items-center gap-1 text-xs text-zinc-500">

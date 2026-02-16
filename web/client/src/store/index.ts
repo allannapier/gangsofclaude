@@ -79,6 +79,11 @@ interface GameStore {
   setTasks: (tasks: any[]) => void;
   completeTask: (taskId: string) => void;
   executeTask: (taskId: string) => void;
+
+  // Toast notifications
+  toasts: Array<{ id: string; type: 'success' | 'error' | 'warning' | 'info'; message: string; duration?: number }>;
+  addToast: (type: 'success' | 'error' | 'warning' | 'info', message: string, duration?: number) => void;
+  removeToast: (id: string) => void;
 }
 
 export const useGameStore = create<GameStore>()(
@@ -134,6 +139,9 @@ export const useGameStore = create<GameStore>()(
       // Tasks
       tasks: [],
 
+      // Toast notifications
+      toasts: [],
+
       setTasks: (tasks) => set({ tasks }),
 
       completeTask: (taskId) => set((state) => ({
@@ -152,6 +160,14 @@ export const useGameStore = create<GameStore>()(
           get().completeTask(taskId);
         }
       },
+
+      // Toast notifications
+      addToast: (type, message, duration) => set(state => ({
+        toasts: [...state.toasts, { id: Date.now().toString() + Math.random(), type, message, duration }],
+      })),
+      removeToast: (id) => set(state => ({
+        toasts: state.toasts.filter(t => t.id !== id),
+      })),
 
       // Actions
       connect: () => {
@@ -204,6 +220,25 @@ export const useGameStore = create<GameStore>()(
           set(state => ({
             claudeOutput: state.claudeOutput + (data.delta?.text || ''),
           }));
+
+          // Route to command response modal when a command is loading
+          if (get().isCommandLoading && data.delta?.text) {
+            set(state => ({
+              commandResponse: state.commandResponse + data.delta.text,
+            }));
+          }
+
+          // Detect completion from _meta.completed flag
+          if (data._meta?.completed) {
+            if (get().isCommandLoading) {
+              console.log('[WebSocket] Command completed via _meta.completed');
+              set({ isCommandLoading: false });
+            }
+            if (get().isProcessingTurn) {
+              console.log('[WebSocket] Turn processing completed via _meta.completed');
+              set({ isProcessingTurn: false });
+            }
+          }
 
           // Try to extract player state updates from the text
           const text = data.delta?.text || '';
@@ -274,12 +309,44 @@ export const useGameStore = create<GameStore>()(
 
         // Handle player state updates from server (after command completes)
         if (data.type === 'player_state_update' && data.player) {
+          const prev = get().player;
           set(state => ({
             player: {
               ...state.player,
               ...data.player,
             },
           }));
+
+          // Show toast notifications for significant state changes
+          const current = data.player;
+          if (current.wealth !== undefined && current.wealth !== prev.wealth) {
+            const diff = current.wealth - prev.wealth;
+            if (diff > 0) {
+              get().addToast('success', `+$${diff.toLocaleString()} wealth`);
+            } else if (diff < 0) {
+              get().addToast('warning', `-$${Math.abs(diff).toLocaleString()} wealth`);
+            }
+          }
+          if (current.respect !== undefined && current.respect !== prev.respect) {
+            const diff = current.respect - prev.respect;
+            if (diff > 0) {
+              get().addToast('success', `+${diff} respect earned`);
+            } else if (diff < 0) {
+              get().addToast('warning', `${diff} respect lost`);
+            }
+          }
+          if (current.rank && current.rank !== prev.rank) {
+            get().addToast('success', `Promoted to ${current.rank}!`);
+          }
+          if (current.family && current.family !== prev.family && current.family !== 'None') {
+            get().addToast('success', `Joined the ${current.family} Family!`);
+          }
+        }
+
+        // Handle events update from server (save.json polling)
+        if (data.type === 'events_update' && data.events) {
+          console.log('[WebSocket] Events update:', data.events.length, 'events');
+          set({ events: data.events });
         }
 
         // Handle game state updates from server (turn, territory ownership, etc.)
@@ -319,6 +386,14 @@ export const useGameStore = create<GameStore>()(
             isProcessingTurn: false,
             processingTurnTarget: null,
           });
+        }
+
+        // Handle command complete - signal that non-turn command is done
+        if (data.type === 'command_complete') {
+          console.log('[WebSocket] Received command_complete signal');
+          if (get().isCommandLoading) {
+            set({ isCommandLoading: false });
+          }
         }
       } catch (e) {
         // Not JSON, append as text
@@ -370,18 +445,25 @@ export const useGameStore = create<GameStore>()(
     const character = getCharacterById(args.target || args.recipient || args.character);
     const target = character ? character.fullName : args.recipient || args.character || 'System';
 
-    set(state => ({
-      events: [...state.events, {
-        id: Date.now().toString(),
-        turn: state.gameState.turn,
-        type: skill,
-        actor: state.player.name,
-        action: skill,
-        target: target,
-        description: `Executed /${skill}${target ? ' on ' + target : ''}`,
-      }],
-      claudeOutput: state.claudeOutput + `> ${command}\n`,
-    }));
+    // Add local event for non-next-turn commands (next-turn events come from the engine)
+    if (skill !== 'next-turn') {
+      set(state => ({
+        events: [...state.events, {
+          id: Date.now().toString(),
+          turn: state.gameState.turn,
+          type: skill,
+          actor: state.player.name,
+          action: skill,
+          target: target,
+          description: `Executed /${skill}${target ? ' on ' + target : ''}`,
+        }],
+        claudeOutput: state.claudeOutput + `> ${command}\n`,
+      }));
+    } else {
+      set(state => ({
+        claudeOutput: state.claudeOutput + `> ${command}\n`,
+      }));
+    }
 
     // Send to CLI
     get().sendToCli({

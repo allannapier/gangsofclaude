@@ -8,12 +8,13 @@ import { DetailsPanel } from './components/DetailsPanel';
 import { CommandPalette } from './components/CommandPalette';
 import { CommandResponseModal } from './components/CommandResponseModal';
 import { TurnProcessingModal } from './components/TurnProcessingModal';
+import { ToastContainer } from './components/Toast';
 import { ClaudeOutput } from './components/ClaudeOutput';
 import { ActionDialog } from './components/ActionDialog';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { MobileDebugger } from './components/MobileDebugger';
 
-function App() {
+export default function App() {
   const {
     connected,
     cliConnected,
@@ -28,17 +29,22 @@ function App() {
     setEvents,
     commandResponseModalOpen,
     setCommandResponseModalOpen,
-    setCommandResponse,
-    setIsCommandLoading,
     isProcessingTurn,
-    processingTurnTarget,
     setIsProcessingTurn,
     setCommandPaletteOpen,
+    setDialogSkill,
   } = useGameStore();
 
   const [isOutputExpanded, setIsOutputExpanded] = useState(false);
   const [mobileActiveTab, setMobileActiveTab] = useState<'game' | 'history' | 'details' | 'actions'>('game');
+  const [showTurnModal, setShowTurnModal] = useState(false);
 
+  // Show turn modal when processing starts, keep it open until user closes
+  useEffect(() => {
+    if (isProcessingTurn) {
+      setShowTurnModal(true);
+    }
+  }, [isProcessingTurn]);
   useEffect(() => {
     connect();
   }, [connect]);
@@ -67,18 +73,6 @@ function App() {
     }
   };
 
-  // Request tasks data from server when connected
-  const requestTasks = () => {
-    const state = useGameStore.getState();
-    if (state.ws?.readyState === WebSocket.OPEN) {
-      console.log('[App] Requesting tasks...');
-      state.ws.send(JSON.stringify({
-        type: 'request_tasks',
-        sessionId: state.sessionId,
-      }));
-    }
-  };
-
   // Sync viewingTurn with current game turn when it changes
   useEffect(() => {
     setViewingTurn(gameState.turn);
@@ -86,13 +80,17 @@ function App() {
 
   // Handle WebSocket messages
   useEffect(() => {
+    if (!ws) return;
+
+    const setState = useGameStore.setState;
+
     const handleMessage = (event: MessageEvent) => {
       const msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
 
       // Handle content delta from Claude
       if (msg.type === 'content_delta') {
         console.log('[App] Content delta:', msg.delta?.text);
-        set(state => ({
+        setState(state => ({
           claudeOutput: state.claudeOutput + (msg.delta?.text || ''),
         }));
       }
@@ -110,72 +108,73 @@ function App() {
             .join('');
 
           if (textParts) {
-            const familyMatch = textParts.join('').match(/joined the (\w+) Family/i) ||
-                                 textParts.join('').match(/now an? (\w+) of the (\w+) Family/i) ||
-                                 textParts.join('').match(/Family: (\w+)/i);
+            const familyMatch = textParts.match(/joined the (\w+) Family/i) ||
+                                 textParts.match(/now an? (\w+) of the (\w+) Family/i) ||
+                                 textParts.match(/Family: (\w+)/i);
             if (familyMatch) {
               const family = familyMatch[1] || familyMatch[2];
               if (family) {
-                set(state => ({
+                setState(state => ({
                   player: { ...state.player, family: family.charAt(0).toUpperCase() + family.slice(1) }
                 }));
               }
             }
-          }
 
-          // Handle rank updates
-          const rankMatch = textParts.join('').match(/promoted to (\w+)/i);
-          if (rankMatch) {
-            const rank = rankMatch[1];
-            if (rank) {
-              set(state => ({
+            // Handle rank updates
+            const rankMatch = textParts.match(/promoted to (\w+)/i);
+            if (rankMatch) {
+              const rank = rankMatch[1];
+              if (rank) {
+                setState(state => ({
                   player: { ...state.player, rank: rank.charAt(0).toUpperCase() + rank.slice(1) }
                 }));
+              }
             }
-          }
-          }
 
-          // Handle wealth updates
-          const wealthMatch = textParts.join('').match(/Wealth: \$(\d+)/);
-          if (wealthMatch) {
-            const wealth = parseInt(wealthMatch[1], 10);
-            if (!isNaN(wealth)) {
-              set(state => ({
+            // Handle wealth updates
+            const wealthMatch = textParts.match(/Wealth: \$(\d+)/);
+            if (wealthMatch) {
+              const wealth = parseInt(wealthMatch[1], 10);
+              if (!isNaN(wealth)) {
+                setState(state => ({
                   player: { ...state.player, wealth }
                 }));
+              }
             }
-          }
 
-          // Handle respect updates
-          const respectMatch = textParts.join('').match(/Respect: (\d+)/);
-          if (respectMatch) {
-            const respect = parseInt(respectMatch[1], 10);
-            if (!isNaN(respect)) {
-              set(state => ({
+            // Handle respect updates
+            const respectMatch = textParts.match(/Respect: (\d+)/);
+            if (respectMatch) {
+              const respect = parseInt(respectMatch[1], 10);
+              if (!isNaN(respect)) {
+                setState(state => ({
                   player: { ...state.player, respect }
                 }));
+              }
             }
-          }
 
-          // Handle loyalty updates
-          const loyaltyMatch = textParts.join('').match(/Loyalty: (\d+)/);
-          if (loyaltyMatch) {
-            const loyalty = parseInt(loyaltyMatch[1], 10);
-            if (!isNaN(loyalty)) {
-              set(state => ({
+            // Handle loyalty updates
+            const loyaltyMatch = textParts.match(/Loyalty: (\d+)/);
+            if (loyaltyMatch) {
+              const loyalty = parseInt(loyaltyMatch[1], 10);
+              if (!isNaN(loyalty)) {
+                setState(state => ({
                   player: { ...state.player, loyalty }
                 }));
+              }
             }
           }
         } else {
           setIsProcessingTurn(false);
         }
+      }
 
       // Handle action started - show turn processing and update current action
       if (msg.type === 'action_started' && msg.action) {
         console.log('[App] Action started:', msg.action);
         setIsProcessingTurn(true);
-        processingTurnTarget = msg.action?.target?.metadata?.task ? msg.action.target.metadata.task.id : null;
+        const target = msg.action?.target?.metadata?.task ? msg.action.target.metadata.task.id : null;
+        setState({ processingTurnTarget: target });
       }
 
       // Handle turn complete - signal that turn processing is done
@@ -189,16 +188,16 @@ function App() {
         console.log('[App] Status:', msg.status);
 
         if (msg.status === 'connected') {
-          set({ cliConnected: true });
+          setState({ cliConnected: true });
         } else if (msg.status === 'disconnected' || msg.status === 'waiting_for_cli') {
-          set({ cliConnected: false });
+          setState({ cliConnected: false });
         }
       }
 
       // Handle player state updates from server (after command completes)
       if (msg.type === 'player_state_update' && msg.player) {
         console.log('[App] Player state update:', msg.player);
-        set(state => ({
+        setState(state => ({
           player: {
             ...state.player,
             ...msg.player,
@@ -209,7 +208,7 @@ function App() {
       // Handle game state updates from server (turn, territory ownership, etc.)
       if (msg.type === 'game_state_update' && msg.gameState) {
         console.log('[App] Game state update:', msg.gameState);
-        set(state => ({
+        setState(state => ({
           gameState: {
             ...state.gameState,
             ...msg.gameState,
@@ -226,15 +225,13 @@ function App() {
       // Handle tasks update from server
       if (msg.type === 'tasks_update' && msg.tasks) {
         console.log('[App] Tasks update:', msg.tasks.length, 'tasks');
-        set(state => ({
-          tasks: msg.tasks,
-        }));
+        setState({ tasks: msg.tasks });
       }
     };
 
     ws.addEventListener('message', handleMessage);
     return () => ws.removeEventListener('message', handleMessage);
-  }, [ws, setEvents]);
+  }, [ws, setEvents, setIsProcessingTurn]);
 
   // Handle mobile tab changes
   const handleMobileTabChange = (tab: 'game' | 'history' | 'details' | 'actions') => {
@@ -362,11 +359,21 @@ function App() {
       {commandResponseModalOpen && (
         <CommandResponseModal
           isOpen={commandResponseModalOpen}
-          response={commandResponse}
-          isLoading={isCommandLoading}
           onClose={() => setCommandResponseModalOpen(false)}
         />
       )}
+
+      {showTurnModal && (
+        <TurnProcessingModal
+          isOpen={showTurnModal}
+          onClose={() => {
+            setShowTurnModal(false);
+            setIsProcessingTurn(false);
+          }}
+        />
+      )}
+
+      <ToastContainer />
     </div>
   );
 }

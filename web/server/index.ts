@@ -377,6 +377,40 @@ Bun.serve({
           status: cliConnection ? 'connected' : (cliProcess ? 'connecting' : 'waiting_for_cli'),
           sessionId: data.sessionId,
         }));
+
+        // Send initial game state from save.json to newly connected browser
+        try {
+          if (existsSync(saveJsonPath)) {
+            const saveData = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
+            if (saveData) {
+              if (saveData.player) {
+                ws.send(JSON.stringify({ type: 'player_state_update', player: saveData.player }));
+              }
+              if (saveData.events && Array.isArray(saveData.events)) {
+                ws.send(JSON.stringify({ type: 'events_update', events: saveData.events }));
+              }
+              if (saveData.turn !== undefined) {
+                ws.send(JSON.stringify({
+                  type: 'game_state_update',
+                  gameState: {
+                    turn: saveData.turn,
+                    phase: saveData.phase || 'playing',
+                    families: saveData.families,
+                    territoryOwnership: saveData.territoryOwnership || {},
+                  },
+                }));
+              }
+              if (saveData.messages) {
+                const tasks = extractTasksFromSaveData(saveData);
+                if (tasks.length > 0) {
+                  ws.send(JSON.stringify({ type: 'tasks_update', tasks }));
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Error sending initial state to browser:', e);
+        }
       }
     },
 
@@ -723,28 +757,41 @@ Bun.serve({
                       }
                     }
                     // Send tasks update (from messages with type: "order")
-                    const tasks = extractTasksFromSaveData(saveData);
-                    if (tasks.length > 0) {
-                      console.log('📋 Sending tasks update from save.json:', tasks.length, 'tasks');
-                      for (const [id, client] of browserClients) {
-                        if (client.readyState === WebSocket.OPEN) {
-                          client.send(JSON.stringify({
-                            type: 'tasks_update',
-                            tasks: tasks,
-                          }));
+                    try {
+                      const tasks = extractTasksFromSaveData(saveData);
+                      if (tasks.length > 0) {
+                        console.log('📋 Sending tasks update from save.json:', tasks.length, 'tasks');
+                        for (const [id, client] of browserClients) {
+                          if (client.readyState === WebSocket.OPEN) {
+                            client.send(JSON.stringify({
+                              type: 'tasks_update',
+                              tasks: tasks,
+                            }));
+                          }
                         }
                       }
+                    } catch (taskErr) {
+                      console.error('Error extracting tasks:', taskErr);
                     }
 
                   } else {
                     console.log('⚠️ save.json not found at:', saveJsonPath);
                   }
 
-                  // Broadcast turn_complete signal only if this was a next-turn command
-                  // This must come AFTER all other updates so the client has fresh data
+                  // Broadcast completion signals AFTER all state updates
                   if (isNextTurnResult) {
                     console.log('🏁 Turn processing complete, broadcasting turn_complete');
                     broadcastTurnComplete();
+                  } else {
+                    // Broadcast command_complete for non-turn commands
+                    console.log('✅ Command complete, broadcasting command_complete');
+                    for (const [id, client] of browserClients) {
+                      if (client.readyState === WebSocket.OPEN) {
+                        client.send(JSON.stringify({
+                          type: 'command_complete',
+                        }));
+                      }
+                    }
                   }
                 } catch (e) {
                   console.error('Error reading save.json:', e);

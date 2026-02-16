@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useGameStore } from '../store';
-import { getCharacterById } from '../data/families';
+import { FAMILIES, getCharacterById } from '../data/families';
 import type { SkillCommand } from '../types';
 
 interface ActionDialogProps {
@@ -9,7 +9,7 @@ interface ActionDialogProps {
 }
 
 export function ActionDialog({ skill, onClose }: ActionDialogProps) {
-  const { selectedCharacter, executeSkill, selectedTerritory } = useGameStore();
+  const { selectedCharacter, executeSkill, selectedTerritory, player } = useGameStore();
   const [amount, setAmount] = useState<'small' | 'medium' | 'large'>('medium');
   const [attackType, setAttackType] = useState<'assassinate' | 'beatdown' | 'business' | 'territory'>('beatdown');
   const [intelType, setIntelType] = useState<'spy' | 'steal' | 'blackmail' | 'survey'>('survey');
@@ -32,6 +32,30 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
   }, [selectedTerritory, skill]);
 
   const selectedChar = selectedCharacter ? getCharacterById(selectedCharacter) : null;
+
+  // Filter characters based on skill context
+  const filteredCharacters = useMemo(() => {
+    const playerFamily = player.family?.toLowerCase();
+    const allChars = FAMILIES.flatMap(f =>
+      f.members.map(m => ({ ...m, familyName: f.name }))
+    );
+
+    switch (skill) {
+      case 'seek-patronage':
+        return allChars.filter(c =>
+          ['Associate', 'Soldier', 'Capo'].includes(c.role)
+        );
+      case 'attack':
+      case 'intel':
+        return playerFamily && playerFamily !== 'none'
+          ? allChars.filter(c => c.family !== playerFamily)
+          : allChars;
+      case 'message':
+      case 'recruit':
+      default:
+        return allChars;
+    }
+  }, [skill, player.family]);
 
   const handleExecute = () => {
     switch (skill) {
@@ -95,7 +119,26 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
         </div>
 
         <div className="p-4 space-y-4">
-          {/* Target Character Selection */}
+          {/* Contextual guidance */}
+          {skill === 'seek-patronage' && (
+            <div className="px-3 py-2 bg-purple-900/20 border border-purple-800/30 rounded-lg">
+              <p className="text-xs text-purple-300">
+                💡 Approach <strong>Associates</strong>, <strong>Soldiers</strong>, or <strong>Capos</strong> to join their family. Dons and Underbosses won't meet with outsiders.
+              </p>
+            </div>
+          )}
+
+          {/* Player wealth indicator for costly operations */}
+          {['intel', 'attack', 'expand', 'claim'].includes(skill) && (
+            <div className="flex items-center justify-between px-3 py-2 bg-zinc-800/50 rounded-lg">
+              <span className="text-xs text-zinc-500">Your wealth</span>
+              <span className={`text-sm font-semibold ${player.wealth > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                ${player.wealth.toLocaleString()}
+              </span>
+            </div>
+          )}
+
+          {/* Target Character Selection — Dropdown */}
           {['seek-patronage', 'recruit', 'attack', 'intel', 'message'].includes(skill) && (
             <div>
               <label className="block text-sm font-medium text-zinc-400 mb-2">
@@ -106,14 +149,27 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
                   </span>
                 )}
               </label>
-              <input
-                type="text"
+              <select
                 value={targetCharacter}
                 onChange={(e) => setTargetCharacter(e.target.value)}
-                placeholder="e.g., moretti_carlo, marinelli_vito"
-                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-md text-sm"
-              />
-              {selectedCharacter && (
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-md text-sm appearance-none cursor-pointer"
+              >
+                <option value="">— Select a character —</option>
+                {FAMILIES.map(family => {
+                  const chars = filteredCharacters.filter(c => c.family === family.id);
+                  if (chars.length === 0) return null;
+                  return (
+                    <optgroup key={family.id} label={`${family.name} Family`}>
+                      {chars.map(char => (
+                        <option key={char.id} value={char.id}>
+                          {char.fullName} — {char.role}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
+              </select>
+              {selectedCharacter && !targetCharacter && (
                 <button
                   onClick={() => setTargetCharacter(selectedCharacter)}
                   className="mt-2 text-xs text-blue-400 hover:text-blue-300"
@@ -130,10 +186,10 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
               <label className="block text-sm font-medium text-zinc-400 mb-2">Attack Type</label>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { value: 'assassinate', label: '🗡️ Assassinate', desc: 'Eliminate permanently' },
-                  { value: 'beatdown', label: '👊 Beatdown', desc: 'Send a message' },
-                  { value: 'business', label: '💼 Business', desc: 'Attack operations' },
-                  { value: 'territory', label: '📍 Territory', desc: 'Take territory' },
+                  { value: 'assassinate', label: '🗡️ Assassinate', desc: 'Eliminate permanently', cost: 'High risk' },
+                  { value: 'beatdown', label: '👊 Beatdown', desc: 'Send a message', cost: 'Low cost' },
+                  { value: 'business', label: '💼 Business', desc: 'Attack operations', cost: 'Medium cost' },
+                  { value: 'territory', label: '📍 Territory', desc: 'Take territory', cost: 'High cost' },
                 ].map((type) => (
                   <button
                     key={type.value}
@@ -146,22 +202,23 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
                   >
                     <div className="font-medium text-sm">{type.label}</div>
                     <div className="text-xs text-zinc-500">{type.desc}</div>
+                    <div className="text-xs text-amber-500 mt-1">{type.cost}</div>
                   </button>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Intel Type Selection */}
+          {/* Intel Type Selection — with cost warnings */}
           {skill === 'intel' && (
             <div>
               <label className="block text-sm font-medium text-zinc-400 mb-2">Operation Type</label>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { value: 'spy', label: '👁️ Spy', desc: 'Observe activities' },
-                  { value: 'steal', label: '💰 Steal', desc: 'Take resources' },
-                  { value: 'blackmail', label: '📸 Blackmail', desc: 'Get leverage' },
-                  { value: 'survey', label: '📊 Survey', desc: 'Assess capabilities' },
+                  { value: 'spy', label: '👁️ Spy', desc: 'Observe activities', cost: '~$10' },
+                  { value: 'steal', label: '💰 Steal', desc: 'Take resources', cost: '~$15' },
+                  { value: 'blackmail', label: '📸 Blackmail', desc: 'Get leverage', cost: '~$20' },
+                  { value: 'survey', label: '📊 Survey', desc: 'Assess capabilities', cost: '~$25' },
                 ].map((type) => (
                   <button
                     key={type.value}
@@ -174,9 +231,13 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
                   >
                     <div className="font-medium text-sm">{type.label}</div>
                     <div className="text-xs text-zinc-500">{type.desc}</div>
+                    <div className="text-xs text-amber-500 mt-1">Cost: {type.cost}</div>
                   </button>
                 ))}
               </div>
+              {player.wealth <= 0 && (
+                <p className="mt-2 text-xs text-red-400">⚠️ You have no wealth — operations may fail!</p>
+              )}
             </div>
           )}
 

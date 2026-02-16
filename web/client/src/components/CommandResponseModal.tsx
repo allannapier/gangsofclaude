@@ -303,14 +303,18 @@ export function CommandResponseModal({ isOpen, onClose }: CommandResponseModalPr
           </div>
         )}
 
-        {/* Close button */}
+        {/* Close button - hidden during loading */}
         <div className="px-6 py-4 border-t border-zinc-800 flex justify-end">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm transition-colors"
-          >
-            {options.length > 0 ? 'Close' : 'Done'}
-          </button>
+          {isCommandLoading ? (
+            <span className="text-xs text-zinc-500 italic">Processing command...</span>
+          ) : (
+            <button
+              onClick={onClose}
+              className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm transition-colors"
+            >
+              {options.length > 0 ? 'Close' : 'Done'}
+            </button>
+          )}
         </div>
       </div>
     </div>

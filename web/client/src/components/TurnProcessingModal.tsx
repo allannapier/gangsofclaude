@@ -44,24 +44,25 @@ export function TurnProcessingModal({ isOpen, onClose }: TurnProcessingModalProp
   const [processingTurn, setProcessingTurn] = useState<number>(gameState.turn);
   const [isComplete, setIsComplete] = useState(false);
   const [completedActions, setCompletedActions] = useState<Action[]>([]);
-  const lastEventCountRef = useRef(0);
+  const baselineEventCountRef = useRef(0);
+  const lastProcessedCountRef = useRef(0);
   const seenActionsRef = useRef<Set<string>>(new Set());
   const isFirstOpenRef = useRef(true);
   const hasShownCompletionRef = useRef(false);
 
-  // Track which turn we're processing - capture it on first open
+  // Track which turn we're processing - capture baseline on first open
   useEffect(() => {
     if (isOpen && isFirstOpenRef.current) {
-      // The processingTurnTarget is set by the store when /next-turn is executed
-      // It represents the NEXT turn (current turn + 1 from before increment)
-      // gameState.turn has already been incremented by the PreToolUse hook
-      let targetTurn = processingTurnTarget ?? gameState.turn;
-      if (targetTurn < 1) targetTurn = 1;
-      setProcessingTurn(targetTurn);
+      const targetTurn = processingTurnTarget ?? gameState.turn;
+      setProcessingTurn(Math.max(targetTurn, 1));
       setIsComplete(false);
       setCompletedActions([]);
+      // Capture baseline: any events beyond this count are "new" for this turn
+      baselineEventCountRef.current = events.length;
+      lastProcessedCountRef.current = 0;
+      seenActionsRef.current.clear();
       isFirstOpenRef.current = false;
-      console.log('[TurnProcessingModal] Processing turn:', targetTurn, { gameStateTurn: gameState.turn, processingTurnTarget });
+      console.log('[TurnProcessingModal] Processing turn:', targetTurn, { baseline: events.length, gameStateTurn: gameState.turn, processingTurnTarget });
     }
 
     if (!isOpen) {
@@ -85,11 +86,11 @@ export function TurnProcessingModal({ isOpen, onClose }: TurnProcessingModalProp
   // Detect turn completion - when isProcessingTurn becomes false, the turn is done
   useEffect(() => {
     if (isOpen && isProcessingTurn === false && processingTurnTarget !== null && !hasShownCompletionRef.current) {
-      // Turn has completed - show completion state
-      const targetTurnEvents = events.filter(e => e.turn === processingTurn);
-      const actions: Action[] = targetTurnEvents.map(evt => ({
+      // Turn has completed - gather all new events since modal opened
+      const newEvents = events.slice(baselineEventCountRef.current);
+      const actions: Action[] = newEvents.map(evt => ({
         actor: evt.actor,
-        action: evt.action,
+        action: typeof evt.action === 'string' ? evt.action : (evt.action && typeof evt.action === 'object' ? (evt.action as any).skill || 'unknown' : String(evt.action || 'unknown')),
         target: evt.target || 'none',
         description: evt.description || '',
       }));
@@ -114,56 +115,52 @@ export function TurnProcessingModal({ isOpen, onClose }: TurnProcessingModalProp
   // Track new events as they arrive during turn processing
   useEffect(() => {
     if (!isOpen) {
-      // Reset when modal closes
       setCurrentAction(null);
       setProgress(0);
       setActionCount(0);
-      lastEventCountRef.current = 0;
+      lastProcessedCountRef.current = 0;
       seenActionsRef.current.clear();
       return;
     }
 
-    // Get events for the turn we're processing
-    const currentTurnEvents = events.filter(e => e.turn === processingTurn);
+    // Get events that arrived since the modal opened (baseline tracking)
+    const newEvents = events.slice(baselineEventCountRef.current);
+    const newCount = newEvents.length;
 
-    // DEBUG logging
     console.log('[TurnProcessingModal] Debug:', {
       processingTurn,
       totalEvents: events.length,
-      currentTurnEvents: currentTurnEvents.length,
-      lastCount: lastEventCountRef.current,
+      baseline: baselineEventCountRef.current,
+      newEventsThisTurn: newCount,
+      lastProcessed: lastProcessedCountRef.current,
       processingTurnTarget,
       isComplete,
     });
 
-    // Check if we have new events
-    if (currentTurnEvents.length > lastEventCountRef.current && !isComplete) {
-      // Find the newest event (the one we haven't seen yet)
-      const newEvents = currentTurnEvents.slice(lastEventCountRef.current);
+    // Check if we have new events beyond what we've already processed
+    if (newCount > lastProcessedCountRef.current && !isComplete) {
+      const unprocessed = newEvents.slice(lastProcessedCountRef.current);
 
-      for (const evt of newEvents) {
-        // Create unique key for this action
-        const actionKey = `${evt.turn}-${evt.actor}-${evt.action}`;
+      for (const evt of unprocessed) {
+        const actionStr = typeof evt.action === 'string' ? evt.action : (evt.action && typeof evt.action === 'object' ? (evt.action as any).skill || 'unknown' : String(evt.action || 'unknown'));
+        const actionKey = `${evt.turn}-${evt.actor}-${actionStr}`;
 
-        // Skip if we've already seen this action
         if (seenActionsRef.current.has(actionKey)) continue;
         seenActionsRef.current.add(actionKey);
 
-        // Update current action - this replaces the previous one
         setCurrentAction({
           actor: evt.actor,
-          action: evt.action,
+          action: actionStr,
           target: evt.target || 'none',
           description: evt.description || '',
         });
       }
 
-      // Update counts
-      lastEventCountRef.current = currentTurnEvents.length;
-      setActionCount(currentTurnEvents.length);
+      lastProcessedCountRef.current = newCount;
+      setActionCount(newCount);
 
       // Calculate progress (assume ~22 actions per turn, cap at 95% until complete)
-      const progressPercent = Math.min((currentTurnEvents.length / 22) * 100, 95);
+      const progressPercent = Math.min((newCount / 22) * 100, 95);
       setProgress(progressPercent);
     }
   }, [events, processingTurn, processingTurnTarget, isOpen, isComplete]);
