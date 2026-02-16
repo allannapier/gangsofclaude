@@ -36,7 +36,7 @@ const backgrounds = [
 ];
 
 export function TurnProcessingModal({ isOpen, onClose }: TurnProcessingModalProps) {
-  const { gameState, events, processingTurnTarget, isProcessingTurn } = useGameStore();
+  const { gameState, events, processingTurnTarget, isProcessingTurn, setIsProcessingTurn, retryInfo } = useGameStore();
   const [currentAction, setCurrentAction] = useState<Action | null>(null);
   const [progress, setProgress] = useState(0);
   const [actionCount, setActionCount] = useState(0);
@@ -44,11 +44,14 @@ export function TurnProcessingModal({ isOpen, onClose }: TurnProcessingModalProp
   const [processingTurn, setProcessingTurn] = useState<number>(gameState.turn);
   const [isComplete, setIsComplete] = useState(false);
   const [completedActions, setCompletedActions] = useState<Action[]>([]);
+  const [isTimedOut, setIsTimedOut] = useState(false);
   const baselineEventCountRef = useRef(0);
   const lastProcessedCountRef = useRef(0);
   const seenActionsRef = useRef<Set<string>>(new Set());
   const isFirstOpenRef = useRef(true);
   const hasShownCompletionRef = useRef(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
 
   // Track which turn we're processing - capture baseline on first open
   useEffect(() => {
@@ -69,8 +72,34 @@ export function TurnProcessingModal({ isOpen, onClose }: TurnProcessingModalProp
       isFirstOpenRef.current = true;
       setIsComplete(false);
       setCompletedActions([]);
+      setIsTimedOut(false);
     }
   }, [isOpen, gameState.turn, processingTurnTarget]);
+
+  // Timeout: if stuck for 2 minutes with no progress, allow dismissal
+  useEffect(() => {
+    if (isOpen && !isComplete && !isTimedOut) {
+      timeoutRef.current = setTimeout(() => {
+        setIsTimedOut(true);
+      }, 120000); // 2 minutes
+      return () => {
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      };
+    }
+  }, [isOpen, isComplete, isTimedOut]);
+
+  // Escape key to dismiss when complete or timed out
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && (isComplete || isTimedOut)) {
+        setIsProcessingTurn(false);
+        onClose?.();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isComplete, isTimedOut, onClose, setIsProcessingTurn]);
 
   // Cycle background images
   useEffect(() => {
@@ -165,6 +194,22 @@ export function TurnProcessingModal({ isOpen, onClose }: TurnProcessingModalProp
     }
   }, [events, processingTurn, processingTurnTarget, isOpen, isComplete]);
 
+  // Retry countdown timer
+  useEffect(() => {
+    if (retryInfo?.status === 'scheduled' && retryInfo.delayMs > 0) {
+      let remaining = Math.ceil(retryInfo.delayMs / 1000);
+      setRetryCountdown(remaining);
+      const interval = setInterval(() => {
+        remaining -= 1;
+        setRetryCountdown(Math.max(remaining, 0));
+        if (remaining <= 0) clearInterval(interval);
+      }, 1000);
+      return () => clearInterval(interval);
+    } else {
+      setRetryCountdown(null);
+    }
+  }, [retryInfo?.status, retryInfo?.delayMs, retryInfo?.attempt]);
+
   if (!isOpen) return null;
 
   const actionIcon = currentAction ? (actionIcons[currentAction.action] || actionIcons.default) : actionIcons.default;
@@ -173,7 +218,7 @@ export function TurnProcessingModal({ isOpen, onClose }: TurnProcessingModalProp
   return (
     <div
       className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 overflow-hidden"
-      onClick={() => isComplete && onClose?.()}
+      onClick={() => (isComplete || isTimedOut) && (() => { setIsProcessingTurn(false); onClose?.(); })()}
     >
       {/* Background Images */}
       {backgrounds.map((bg, index) => (
@@ -263,11 +308,42 @@ export function TurnProcessingModal({ isOpen, onClose }: TurnProcessingModalProp
               <span className="text-sm">{actionCount} actions processed</span>
             </div>
 
-            {/* Loading indicator */}
-            <div className="flex items-center justify-center gap-2 text-zinc-400">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span className="text-sm">Please wait...</span>
-            </div>
+            {/* Loading indicator or Retry status */}
+            {retryInfo?.status === 'scheduled' || retryInfo?.status === 'retrying' ? (
+              <div className="bg-amber-900/30 border border-amber-700/50 rounded-xl p-4 mb-4">
+                <div className="flex items-center justify-center gap-2 text-amber-400 mb-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.07 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                  <span className="font-medium">
+                    {retryInfo.status === 'scheduled'
+                      ? `API Rate Limited — Retrying in ${retryCountdown ?? '...'}s`
+                      : 'Retrying command...'}
+                  </span>
+                </div>
+                <p className="text-xs text-amber-500/70">
+                  Attempt {retryInfo.attempt} of {retryInfo.maxAttempts}
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center gap-2 text-zinc-400">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span className="text-sm">Please wait...</span>
+              </div>
+            )}
+
+            {/* Cancel button when timed out */}
+            {isTimedOut && (
+              <button
+                onClick={() => {
+                  setIsProcessingTurn(false);
+                  onClose?.();
+                }}
+                className="mt-4 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg text-sm transition-colors"
+              >
+                Cancel — Turn may not have processed
+              </button>
+            )}
           </>
         ) : (
           <>

@@ -1,8 +1,13 @@
+import { useMemo } from 'react';
 import { useGameStore } from '../store';
-import { Terminal, Zap } from 'lucide-react';
+import { Terminal, Zap, Check } from 'lucide-react';
 
 export function Header() {
-  const { connected, cliConnected, gameState, setCommandPaletteOpen } = useGameStore();
+  const { connected, cliConnected, gameState, events, setCommandPaletteOpen } = useGameStore();
+
+  const playerActedThisTurn = useMemo(() => {
+    return events.some(e => e.actor === 'Player' && e.turn === gameState.turn && e.action !== 'status' && e.action !== 'next-turn' && e.action !== 'message' && e.action !== 'promote');
+  }, [events, gameState.turn]);
 
   return (
     <header className="h-14 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between px-4 md:px-6">
@@ -34,10 +39,14 @@ export function Header() {
         {/* Actions Button */}
         <button
           onClick={() => setCommandPaletteOpen(true)}
-          className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg text-sm font-medium transition-colors"
+          className={`flex items-center gap-1.5 md:gap-2 px-2.5 md:px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            playerActedThisTurn
+              ? 'bg-green-600/20 hover:bg-green-600/30 text-green-400'
+              : 'bg-blue-600/20 hover:bg-blue-600/30 text-blue-400'
+          }`}
         >
-          <Zap className="w-4 h-4" />
-          <span className="hidden sm:inline">Actions</span>
+          {playerActedThisTurn ? <Check className="w-4 h-4" /> : <Zap className="w-4 h-4" />}
+          <span className="hidden sm:inline">{playerActedThisTurn ? 'Acted' : 'Actions'}</span>
         </button>
 
         <div className="flex items-center gap-1.5 md:gap-2 text-sm text-zinc-400">

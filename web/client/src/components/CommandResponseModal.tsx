@@ -8,7 +8,7 @@ interface CommandResponseModalProps {
 }
 
 export function CommandResponseModal({ isOpen, onClose }: CommandResponseModalProps) {
-  const { currentCommand, commandResponse, isCommandLoading, setCommandResponse } = useGameStore();
+  const { currentCommand, commandResponse, isCommandLoading, setCommandResponse, retryInfo } = useGameStore();
   const contentRef = useRef<HTMLDivElement>(null);
   const [responseText, setResponseText] = useState('');
 
@@ -213,12 +213,40 @@ export function CommandResponseModal({ isOpen, onClose }: CommandResponseModalPr
       // Match patterns like "1. **Option**" or "- **Option**"
       const match = line.match(/^(?:\d+\.|-)\s+\*\*(.+?)\*\*/);
       if (match) {
-        options.push(match[1]);
+        const option = match[1];
+        // Filter out section headers (end with ":") and non-actionable items
+        if (option.endsWith(':') || option.endsWith('Position:') || option.endsWith('Access:') || option.endsWith('Potential:')) {
+          continue;
+        }
+        // Filter out items that look like data labels (contain only descriptive words)
+        if (/^(Revenue|Strategic|Shipping|Current|Status|Location|Income|Cost|Risk)\b/.test(option)) {
+          continue;
+        }
+        options.push(option);
       }
     }
 
     return options;
   };
+
+  const [clickedOption, setClickedOption] = useState<string | null>(null);
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
+
+  // Retry countdown timer
+  useEffect(() => {
+    if (retryInfo?.status === 'scheduled' && retryInfo.delayMs > 0) {
+      let remaining = Math.ceil(retryInfo.delayMs / 1000);
+      setRetryCountdown(remaining);
+      const interval = setInterval(() => {
+        remaining -= 1;
+        setRetryCountdown(Math.max(remaining, 0));
+        if (remaining <= 0) clearInterval(interval);
+      }, 1000);
+      return () => clearInterval(interval);
+    } else {
+      setRetryCountdown(null);
+    }
+  }, [retryInfo?.status, retryInfo?.delayMs, retryInfo?.attempt]);
 
   const options = extractOptions(responseText);
 
@@ -263,8 +291,28 @@ export function CommandResponseModal({ isOpen, onClose }: CommandResponseModalPr
         >
           {isCommandLoading && !responseText ? (
             <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
-              <Loader2 className="w-8 h-8 animate-spin mb-4" />
-              <p>Waiting for response...</p>
+              {retryInfo?.status === 'scheduled' || retryInfo?.status === 'retrying' ? (
+                <>
+                  <div className="w-12 h-12 rounded-full bg-amber-900/30 border border-amber-700/50 flex items-center justify-center mb-4">
+                    <svg className="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.07 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                    </svg>
+                  </div>
+                  <p className="text-amber-400 font-medium mb-1">
+                    {retryInfo.status === 'scheduled'
+                      ? `API Rate Limited — Retrying in ${retryCountdown ?? '...'}s`
+                      : 'Retrying command...'}
+                  </p>
+                  <p className="text-xs text-amber-500/70">
+                    Attempt {retryInfo.attempt} of {retryInfo.maxAttempts}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Loader2 className="w-8 h-8 animate-spin mb-4" />
+                  <p>Waiting for response...</p>
+                </>
+              )}
             </div>
           ) : responseText ? (
             <div className="space-y-1">
@@ -286,16 +334,30 @@ export function CommandResponseModal({ isOpen, onClose }: CommandResponseModalPr
               {options.map((option, idx) => (
                 <button
                   key={idx}
+                  disabled={!!clickedOption}
                   onClick={() => {
+                    setClickedOption(option);
                     // Send the option as a follow-up message
                     useGameStore.getState().sendToCli({
                       type: 'prompt',
                       prompt: option,
                       sessionId: useGameStore.getState().sessionId,
                     });
+                    // Start loading state for new command
+                    useGameStore.getState().setCommandResponse('');
+                    useGameStore.setState({ isCommandLoading: true, commandResponse: '' });
+                    setResponseText('');
+                    setClickedOption(null);
                   }}
-                  className="px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg text-sm transition-colors"
+                  className={`px-4 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                    clickedOption === option
+                      ? 'bg-blue-600/40 text-blue-300'
+                      : clickedOption
+                      ? 'bg-zinc-800/50 text-zinc-600 cursor-not-allowed'
+                      : 'bg-blue-600/20 hover:bg-blue-600/30 text-blue-400'
+                  }`}
                 >
+                  {clickedOption === option && <Loader2 className="w-3 h-3 animate-spin" />}
                   {option}
                 </button>
               ))}
@@ -306,7 +368,11 @@ export function CommandResponseModal({ isOpen, onClose }: CommandResponseModalPr
         {/* Close button - hidden during loading */}
         <div className="px-6 py-4 border-t border-zinc-800 flex justify-end">
           {isCommandLoading ? (
-            <span className="text-xs text-zinc-500 italic">Processing command...</span>
+            <span className="text-xs text-zinc-500 italic">
+              {retryInfo?.status === 'scheduled' ? `Retrying in ${retryCountdown ?? '...'}s...` :
+               retryInfo?.status === 'retrying' ? 'Retrying...' :
+               'Processing command...'}
+            </span>
           ) : (
             <button
               onClick={onClose}

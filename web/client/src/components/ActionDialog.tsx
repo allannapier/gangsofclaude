@@ -209,31 +209,44 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
             </div>
           )}
 
-          {/* Intel Type Selection — with cost warnings */}
+          {/* Intel Type Selection — with cost warnings and rank restrictions */}
           {skill === 'intel' && (
             <div>
               <label className="block text-sm font-medium text-zinc-400 mb-2">Operation Type</label>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { value: 'spy', label: '👁️ Spy', desc: 'Observe activities', cost: '~$10' },
-                  { value: 'steal', label: '💰 Steal', desc: 'Take resources', cost: '~$15' },
-                  { value: 'blackmail', label: '📸 Blackmail', desc: 'Get leverage', cost: '~$20' },
-                  { value: 'survey', label: '📊 Survey', desc: 'Assess capabilities', cost: '~$25' },
-                ].map((type) => (
-                  <button
-                    key={type.value}
-                    onClick={() => setIntelType(type.value as any)}
-                    className={`p-3 rounded-md text-left transition-colors ${
-                      intelType === type.value
-                        ? 'bg-purple-900/50 border border-purple-700'
-                        : 'bg-zinc-800 border border-zinc-700 hover:border-zinc-600'
-                    }`}
-                  >
-                    <div className="font-medium text-sm">{type.label}</div>
-                    <div className="text-xs text-zinc-500">{type.desc}</div>
-                    <div className="text-xs text-amber-500 mt-1">Cost: {type.cost}</div>
-                  </button>
-                ))}
+                  { value: 'spy', label: '👁️ Spy', desc: 'Observe activities', cost: '~$10', minRank: 'Soldier' },
+                  { value: 'steal', label: '💰 Steal', desc: 'Take resources', cost: '~$15', minRank: 'Soldier' },
+                  { value: 'blackmail', label: '📸 Blackmail', desc: 'Get leverage', cost: '~$20', minRank: 'Capo' },
+                  { value: 'survey', label: '📊 Survey', desc: 'Assess capabilities', cost: '~$25', minRank: 'Associate' },
+                ].map((type) => {
+                  const rankOrder = ['Outsider', 'Associate', 'Soldier', 'Capo', 'Underboss', 'Don'];
+                  const playerRankIdx = rankOrder.indexOf(player.rank);
+                  const requiredRankIdx = rankOrder.indexOf(type.minRank);
+                  const isLocked = playerRankIdx < requiredRankIdx;
+
+                  return (
+                    <button
+                      key={type.value}
+                      onClick={() => !isLocked && setIntelType(type.value as any)}
+                      disabled={isLocked}
+                      className={`p-3 rounded-md text-left transition-colors ${
+                        isLocked
+                          ? 'bg-zinc-900 border border-zinc-800 opacity-50 cursor-not-allowed'
+                          : intelType === type.value
+                          ? 'bg-purple-900/50 border border-purple-700'
+                          : 'bg-zinc-800 border border-zinc-700 hover:border-zinc-600'
+                      }`}
+                    >
+                      <div className="font-medium text-sm">{type.label}</div>
+                      <div className="text-xs text-zinc-500">{type.desc}</div>
+                      <div className="text-xs text-amber-500 mt-1">Cost: {type.cost}</div>
+                      {isLocked && (
+                        <div className="text-xs text-red-400 mt-1">🔒 Requires {type.minRank}+</div>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
               {player.wealth <= 0 && (
                 <p className="mt-2 text-xs text-red-400">⚠️ You have no wealth — operations may fail!</p>

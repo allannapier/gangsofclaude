@@ -134,7 +134,9 @@ export function TerritoryMap() {
               <div>
                 <div className="text-xs text-zinc-500">Territory</div>
                 <div className="font-semibold text-blue-400">
-                  {family.territory.length}
+                  {gameState.territoryOwnership
+                    ? Object.values(gameState.territoryOwnership).filter(owner => owner === family.id).length
+                    : family.territory.length}
                 </div>
               </div>
               <div>

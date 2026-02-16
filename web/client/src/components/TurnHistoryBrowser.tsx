@@ -163,6 +163,13 @@ function formatDescription(desc: string): string {
  * Generate a human-readable narrative from event data.
  * Falls back to cleaned description if no better narrative can be built.
  */
+const KNOWN_FAMILIES = ['marinelli', 'rossetti', 'falcone', 'moretti'];
+
+function isKnownFamily(target: string): boolean {
+  const normalized = target.replace(/\s+[Ff]amily$/i, '').trim().toLowerCase();
+  return KNOWN_FAMILIES.includes(normalized);
+}
+
 function cleanFamilyTarget(target: string): string {
   if (!target || target === 'System' || target === 'system') return '';
   // Remove trailing "Family" to avoid "Rossetti Family family"
@@ -191,7 +198,8 @@ function generateEventNarrative(event: GameEvent): string {
     case 'attack':
     case 'plan_attack': {
       const tf = cleanFamilyTarget(target);
-      if (tf) return `${actorShort} launched an attack against the ${tf} family`;
+      if (tf && isKnownFamily(target)) return `${actorShort} launched an attack against the ${tf} family`;
+      if (tf) return `${actorShort} launched an attack against ${tf}`;
       return `${actorShort} prepared an offensive operation`;
     }
 
@@ -214,8 +222,11 @@ function generateEventNarrative(event: GameEvent): string {
     case 'surveillance':
     case 'scout': {
       const tf = cleanFamilyTarget(target);
-      if (tf && target !== actorFamily) {
+      if (tf && target !== actorFamily && isKnownFamily(target)) {
         return `${actorShort} gathered intelligence on the ${tf} family`;
+      }
+      if (tf && target !== actorFamily) {
+        return `${actorShort} gathered intelligence on ${tf}`;
       }
       return `${actorShort} conducted surveillance operations`;
     }
@@ -229,7 +240,8 @@ function generateEventNarrative(event: GameEvent): string {
         return `${actorShort} communicated with family leadership`;
       }
       const tf = cleanFamilyTarget(target);
-      if (tf) return `${actorShort} sent a message to the ${tf} family`;
+      if (tf && isKnownFamily(target)) return `${actorShort} sent a message to the ${tf} family`;
+      if (tf) return `${actorShort} sent a message to ${tf}`;
       return `${actorShort} coordinated with allies`;
     }
 
@@ -460,8 +472,8 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
   };
 
   const handleJumpToLatest = () => {
-    setViewingTurn(currentTurn);
-    onTurnChange?.(currentTurn);
+    setViewingTurn(maxTurn);
+    onTurnChange?.(maxTurn);
   };
 
   const clearFilters = () => {
@@ -544,7 +556,7 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
             </button>
           </div>
 
-          {viewingTurn !== currentTurn && (
+          {viewingTurn !== maxTurn && (
             <button
               onClick={handleJumpToLatest}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 rounded-lg text-sm font-medium transition-colors"

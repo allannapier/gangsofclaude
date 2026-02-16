@@ -1,0 +1,23 @@
+═══════════════════════════════════════════════════════════
+                  VICTORY ON THE STREETS
+═══════════════════════════════════════════════════════════
+
+Your forces have triumphed over {defender_family}!
+
+Battle Summary:
+  Attack Power: {attack_power}
+  Defense Power: {defense_power}
+
+Casualties:
+  Your losses: {attacker_losses.soldiers} soldiers, ${attacker_losses.wealth} wealth
+  Their losses: {defender_losses.soldiers} soldiers, ${defender_losses.wealth} wealth
+
+{if territory_gained > 0}
+Territory captured! Your family expands its influence.
+{end}
+
+Respect earned throughout the city.
+
+{commentary}
+
+═══════════════════════════════════════════════════════════

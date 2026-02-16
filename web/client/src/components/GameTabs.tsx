@@ -334,7 +334,9 @@ export function GameTabs() {
                       <span className="font-medium text-sm">{family.name}</span>
                     </div>
                     <div className="text-xs text-zinc-500">
-                      {family.territory.length} territories • {family.members.filter(m => m.alive).length} members
+                      {gameState.territoryOwnership
+                        ? Object.values(gameState.territoryOwnership).filter(owner => owner === family.id).length
+                        : family.territory.length} territories • {family.members.filter(m => m.alive).length} members
                     </div>
                   </div>
                 ))}

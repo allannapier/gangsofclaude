@@ -49,10 +49,15 @@ const saveJsonPath = join(rootDir, '..', '.claude', 'game-state', 'save.json');
 console.log('🔧 DEBUG: Server code loaded - index.ts');
 console.log('📁 Save file path:', saveJsonPath);
 
-// Track last known event count to detect changes
+// Track last known state to detect changes
 let lastEventCount = 0;
 let lastMessageCount = 0;
 let lastKnownTurn = 0;
+let lastPlayerWealth = -1;
+let lastPlayerRespect = -1;
+let lastPlayerRank = '';
+let lastPlayerFamily = '';
+let lastTerritoryHash = '';
 
 // Poll save.json for changes (more reliable than fs.watch)
 function setupSaveFileWatcher() {
@@ -126,10 +131,17 @@ function readAndBroadcastSaveData() {
       }
     }
 
-    // Check if turn changed
-    if (saveData.turn !== undefined && saveData.turn !== lastKnownTurn) {
-      console.log(`🔄 Turn changed: ${saveData.turn} (was ${lastKnownTurn})`);
+    // Check if turn changed OR territory ownership changed
+    const currentTerritoryHash = JSON.stringify(saveData.territoryOwnership || {});
+    if ((saveData.turn !== undefined && saveData.turn !== lastKnownTurn) || currentTerritoryHash !== lastTerritoryHash) {
+      if (saveData.turn !== lastKnownTurn) {
+        console.log(`🔄 Turn changed: ${saveData.turn} (was ${lastKnownTurn})`);
+      }
+      if (currentTerritoryHash !== lastTerritoryHash) {
+        console.log(`🗺️ Territory ownership changed`);
+      }
       lastKnownTurn = saveData.turn;
+      lastTerritoryHash = currentTerritoryHash;
 
       // Broadcast game state update
       for (const [id, client] of browserClients) {
@@ -143,6 +155,34 @@ function readAndBroadcastSaveData() {
               deceased: saveData.deceased || [],
             },
           }));
+        }
+      }
+    }
+
+    // Check if player state changed
+    if (saveData.player) {
+      const p = saveData.player;
+      if (p.wealth !== lastPlayerWealth || p.respect !== lastPlayerRespect || p.rank !== lastPlayerRank || (p.family || 'None') !== lastPlayerFamily) {
+        console.log(`👤 Player state changed: wealth=${p.wealth}, respect=${p.respect}, rank=${p.rank}, family=${p.family}`);
+        lastPlayerWealth = p.wealth;
+        lastPlayerRespect = p.respect;
+        lastPlayerRank = p.rank || '';
+        lastPlayerFamily = p.family || 'None';
+
+        for (const [id, client] of browserClients) {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({
+              type: 'player_state_update',
+              player: {
+                name: p.name || 'Player',
+                rank: p.rank || 'Outsider',
+                family: p.family || 'None',
+                wealth: p.wealth ?? 0,
+                respect: p.respect ?? 0,
+                loyalty: p.loyalty ?? 50,
+              },
+            }));
+          }
         }
       }
     }
@@ -194,6 +234,96 @@ const pendingPrompts: string[] = [];
 // Track pending next-turn commands to broadcast completion
 const pendingNextTurnRequests = new Set<string>();
 let isNextTurnInProgress = false;
+// Track CLI initialization — prompts sent before init may be lost
+let cliInitialized = false;
+
+// Retry configuration for API rate-limit errors
+const RETRY_DELAYS = [5000, 15000, 30000]; // 5s, 15s, 30s
+let retryCount = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let lastFailedPrompt: string | null = null;
+let lastSubmittedPrompt: string | null = null;
+
+function isRateLimitError(resultText: string): boolean {
+  return /API Error:\s*429/i.test(resultText) ||
+         /rate.?limit/i.test(resultText) ||
+         /too many requests/i.test(resultText) ||
+         /Insufficient balance/i.test(resultText) ||
+         /overloaded/i.test(resultText);
+}
+
+function broadcastToAllBrowsers(msg: object) {
+  const json = JSON.stringify(msg);
+  for (const [, client] of browserClients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(json);
+    }
+  }
+}
+
+function cancelRetry() {
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  retryCount = 0;
+  lastFailedPrompt = null;
+}
+
+function scheduleRetry(prompt: string) {
+  if (retryCount >= RETRY_DELAYS.length) {
+    console.log('❌ Max retries reached, giving up');
+    broadcastToAllBrowsers({ type: 'retry_failed', attempt: retryCount, maxAttempts: RETRY_DELAYS.length, message: 'Max retries reached. Please try again later.' });
+    cancelRetry();
+    return false;
+  }
+
+  const delay = RETRY_DELAYS[retryCount];
+  lastFailedPrompt = prompt;
+  console.log(`🔄 Scheduling retry ${retryCount + 1}/${RETRY_DELAYS.length} in ${delay / 1000}s for: ${prompt}`);
+
+  broadcastToAllBrowsers({
+    type: 'retry_scheduled',
+    attempt: retryCount + 1,
+    maxAttempts: RETRY_DELAYS.length,
+    delayMs: delay,
+    prompt,
+  });
+
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    if (!cliConnection || cliConnection.readyState !== WebSocket.OPEN || !cliInitialized) {
+      console.log('❌ CLI not connected for retry');
+      broadcastToAllBrowsers({ type: 'retry_failed', attempt: retryCount, maxAttempts: RETRY_DELAYS.length, message: 'CLI disconnected during retry.' });
+      cancelRetry();
+      return;
+    }
+
+    retryCount++;
+    console.log(`🔄 Retrying (attempt ${retryCount}/${RETRY_DELAYS.length}): ${prompt}`);
+    broadcastToAllBrowsers({
+      type: 'retrying',
+      attempt: retryCount,
+      maxAttempts: RETRY_DELAYS.length,
+      prompt,
+    });
+
+    const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+    const ndjson = JSON.stringify({
+      type: 'user',
+      requestId,
+      message: { role: 'user', content: prompt },
+    }) + '\n';
+    cliConnection.send(ndjson);
+
+    if (prompt.trim() === '/next-turn') {
+      pendingNextTurnRequests.add(requestId);
+      isNextTurnInProgress = true;
+    }
+  }, delay);
+
+  return true;
+}
 
 // Start Claude Code CLI process
 async function startCliProcess() {
@@ -282,6 +412,7 @@ function stopCliProcess() {
     cliProcess = null;
   }
   cliConnection = null;
+  cliInitialized = false;
   pendingPrompts.length = 0;
 }
 
@@ -363,28 +494,14 @@ Bun.serve({
 
       if (data.type === 'cli') {
         cliConnection = ws;
+        cliInitialized = false; // Wait for init message before flushing prompts
 
-        // Flush any queued prompts that arrived before CLI websocket connected.
-        while (pendingPrompts.length > 0 && cliConnection.readyState === WebSocket.OPEN) {
-          const prompt = pendingPrompts.shift()!;
-          const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-          const ndjson = JSON.stringify({
-            type: 'user',
-            requestId,
-            message: {
-              role: 'user',
-              content: prompt,
-            },
-          }) + '\n';
-          cliConnection.send(ndjson);
-        }
-
-        // Notify all browsers that CLI is connected
+        // Notify all browsers that CLI is connecting (not fully ready yet)
         for (const [id, client] of browserClients) {
           if (client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify({
               type: 'status',
-              status: 'connected',
+              status: 'connecting',
               sessionId: data.sessionId,
             }));
           }
@@ -612,7 +729,7 @@ Bun.serve({
           return;
         }
 
-        if (cliConnection && cliConnection.readyState === WebSocket.OPEN) {
+        if (cliConnection && cliConnection.readyState === WebSocket.OPEN && cliInitialized) {
           try {
             const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
             const ndjson = JSON.stringify({
@@ -624,42 +741,16 @@ Bun.serve({
               },
             }) + '\n';
             cliConnection.send(ndjson);
+            lastSubmittedPrompt = prompt;
+            cancelRetry(); // Reset retry state on fresh command
 
             // Track if this is a next-turn command
             if (prompt.trim() === '/next-turn') {
               pendingNextTurnRequests.add(requestId);
               isNextTurnInProgress = true;
               console.log('🎯 Tracking next-turn request:', requestId);
-
-              // Increment turn in save.json before forwarding to CLI
-              // (This is a fallback in case the PreToolUse hook doesn't fire)
-              try {
-                if (existsSync(saveJsonPath)) {
-                  const saveData = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
-                  const currentTurn = saveData.turn || 0;
-                  saveData.turn = currentTurn + 1;
-                  writeFileSync(saveJsonPath, JSON.stringify(saveData, null, 2));
-                  console.log(`🎯 Pre-incremented turn from ${currentTurn} to ${saveData.turn}`);
-
-                  // Broadcast turn update to browsers immediately
-                  for (const [id, client] of browserClients) {
-                    if (client.readyState === WebSocket.OPEN) {
-                      client.send(JSON.stringify({
-                        type: 'game_state_update',
-                        gameState: {
-                          turn: saveData.turn,
-                          phase: saveData.phase || 'playing',
-                          families: saveData.families,
-                          territoryOwnership: saveData.territoryOwnership || {},
-                          deceased: saveData.deceased || [],
-                        },
-                      }));
-                    }
-                  }
-                }
-              } catch (e) {
-                console.error('Error pre-incrementing turn:', e);
-              }
+              // NOTE: Turn increment is handled by the PreToolUse hook (increment-turn.sh).
+              // Do NOT increment here to avoid double-incrementing.
             }
           } catch (e) {
             console.error('Error forwarding to CLI WebSocket:', e);
@@ -705,6 +796,34 @@ Bun.serve({
             const cliData = JSON.parse(line);
             console.log('🔄 Transforming CLI message:', cliData.type);
 
+            // Detect CLI ready — flush pending prompts once we receive any message
+            if (!cliInitialized) {
+              cliInitialized = true;
+              console.log('✅ CLI initialized (first message received), flushing', pendingPrompts.length, 'queued prompts');
+              // Notify browsers
+              for (const [id, client] of browserClients) {
+                if (client.readyState === WebSocket.OPEN) {
+                  client.send(JSON.stringify({ type: 'status', status: 'connected' }));
+                }
+              }
+              // Flush queued prompts
+              while (pendingPrompts.length > 0 && cliConnection && cliConnection.readyState === WebSocket.OPEN) {
+                const prompt = pendingPrompts.shift()!;
+                const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+                const ndjson = JSON.stringify({
+                  type: 'user',
+                  requestId,
+                  message: { role: 'user', content: prompt },
+                }) + '\n';
+                cliConnection.send(ndjson);
+                if (prompt.trim() === '/next-turn') {
+                  pendingNextTurnRequests.add(requestId);
+                  isNextTurnInProgress = true;
+                }
+                console.log('📤 Flushed queued prompt:', prompt.substring(0, 50));
+              }
+            }
+
             // Handle control_request specially - send response back to CLI
             if (cliData.type === 'control_request' && cliData.request_id) {
               const controlResponse = {
@@ -729,12 +848,34 @@ Bun.serve({
 
             // Check if this was a command result - do this BEFORE the continue so we always update state
             if (cliData.type === 'result' || (cliData.subtype === 'success' && cliData.result)) {
+              const resultText = String(cliData.result || '');
+              const isError = cliData.is_error === true;
+
+              // Check for rate-limit / API errors and auto-retry
+              if (isError && isRateLimitError(resultText) && lastSubmittedPrompt) {
+                console.log('⚠️ Rate limit error detected, attempting retry for:', lastSubmittedPrompt);
+                const willRetry = scheduleRetry(lastSubmittedPrompt);
+                if (willRetry) {
+                  // Don't send turn_complete/command_complete — we're retrying
+                  // But still forward the error text to browser for visibility
+                  continue;
+                }
+                // If max retries reached, fall through to normal completion
+              } else {
+                // Successful result — reset retry state
+                cancelRetry();
+              }
+
               console.log('🎯 Command completed, will update player state from save.json');
               // CLI may return request_id (snake_case) or requestId (camelCase)
               const responseRequestId = cliData.requestId || cliData.request_id;
               // Check if this is a next-turn result by requestId or by the in-progress flag
-              const isNextTurnResult = (responseRequestId && pendingNextTurnRequests.has(responseRequestId)) ||
-                                       (isNextTurnInProgress && cliData.result && typeof cliData.result === 'string' && cliData.result.includes('Turn'));
+              // Check if this is a next-turn result.
+              // Use isNextTurnInProgress as the primary signal — it's set when
+              // /next-turn is sent and cleared here. The requestId match is a
+              // secondary check in case isNextTurnInProgress was cleared by a race.
+              const isNextTurnResult = isNextTurnInProgress ||
+                                       (responseRequestId && pendingNextTurnRequests.has(responseRequestId));
               if (isNextTurnResult) {
                 if (responseRequestId) {
                   pendingNextTurnRequests.delete(responseRequestId);
@@ -829,19 +970,32 @@ Bun.serve({
                         const income = calculateTurnIncome(incomeState.player, family, territoryCount);
                         if (income.total > 0) {
                           incomeState.player.wealth = (incomeState.player.wealth || 0) + income.total;
+                        }
+                        // Award respect per turn based on rank and activity
+                        const respectGains: Record<string, number> = {
+                          'Associate': 1, 'Soldier': 2, 'Capo': 3, 'Underboss': 4, 'Don': 5
+                        };
+                        const respectGain = respectGains[incomeState.player.rank] || 0;
+                        if (respectGain > 0) {
+                          incomeState.player.respect = (incomeState.player.respect || 0) + respectGain;
+                        }
+                        if (income.total > 0 || respectGain > 0) {
                           // Log income as an event
                           if (!incomeState.events) incomeState.events = [];
+                          const parts: string[] = [];
+                          if (income.total > 0) parts.push(`$${income.total} (${income.description})`);
+                          if (respectGain > 0) parts.push(`+${respectGain} respect`);
                           incomeState.events.push({
                             turn: incomeState.turn,
                             actor: 'System',
                             action: 'income',
                             target: incomeState.player.family,
-                            result: `💰 Turn income: $${income.total} (${income.description})`,
+                            result: `💰 Turn income: ${parts.join(', ')}`,
                             outcome: 'success',
                           });
                           writeFileSync(saveJsonPath, JSON.stringify(incomeState, null, 2));
-                          console.log(`💰 Applied turn income: $${income.total} → player now has $${incomeState.player.wealth}`);
-                          // Re-broadcast updated player state with new wealth
+                          console.log(`💰 Applied turn income: $${income.total}, +${respectGain} respect → player now has $${incomeState.player.wealth}, ${incomeState.player.respect} respect`);
+                          // Re-broadcast updated player state with new wealth and respect
                           for (const [id, client] of browserClients) {
                             if (client.readyState === WebSocket.OPEN) {
                               client.send(JSON.stringify({
@@ -944,7 +1098,26 @@ Bun.serve({
                   }
 
                   // Broadcast completion signals AFTER all state updates
+                  // Re-read save.json one final time to get income/death events
+                  // that were added above, then broadcast before turn_complete.
                   if (isNextTurnResult) {
+                    try {
+                      if (existsSync(saveJsonPath)) {
+                        const finalState = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
+                        if (finalState.events && Array.isArray(finalState.events)) {
+                          for (const [id, client] of browserClients) {
+                            if (client.readyState === WebSocket.OPEN) {
+                              client.send(JSON.stringify({
+                                type: 'events_update',
+                                events: finalState.events,
+                              }));
+                            }
+                          }
+                        }
+                      }
+                    } catch (e) {
+                      console.error('Error re-broadcasting final events:', e);
+                    }
                     console.log('🏁 Turn processing complete, broadcasting turn_complete');
                     broadcastTurnComplete();
                   } else {
@@ -961,7 +1134,7 @@ Bun.serve({
                 } catch (e) {
                   console.error('Error reading save.json:', e);
                 }
-              }, 100); // Small delay to ensure file is written
+              }, 300); // Delay to ensure save.json has been written by CLI
             }
 
             // Skip null messages (system, etc.)
@@ -1001,6 +1174,7 @@ Bun.serve({
 
       if (data.type === 'cli') {
         cliConnection = null;
+        cliInitialized = false;
 
         for (const [id, client] of browserClients) {
           if (client.readyState === WebSocket.OPEN) {

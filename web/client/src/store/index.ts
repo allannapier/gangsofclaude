@@ -63,6 +63,16 @@ interface GameStore {
   lastIncomeReport: any | null;
   deceased: string[]; // Character IDs of dead characters
 
+  // Retry state
+  retryInfo: {
+    attempt: number;
+    maxAttempts: number;
+    delayMs: number;
+    prompt: string;
+    status: 'scheduled' | 'retrying' | 'failed' | null;
+    message?: string;
+  } | null;
+
   // Actions
   connect: () => void;
   disconnect: () => void;
@@ -152,6 +162,9 @@ export const useGameStore = create<GameStore>()(
       processingTurnTarget: null,
       lastIncomeReport: null,
       deceased: [],
+
+      // Retry state
+      retryInfo: null,
 
       // Tasks
       tasks: [],
@@ -246,14 +259,14 @@ export const useGameStore = create<GameStore>()(
           }
 
           // Detect completion from _meta.completed flag
+          // NOTE: Only use for isCommandLoading (content is fully streamed).
+          // Do NOT use for isProcessingTurn — turn completion must wait for
+          // the server's turn_complete signal which arrives AFTER all events
+          // have been broadcast from save.json.
           if (data._meta?.completed) {
             if (get().isCommandLoading) {
               console.log('[WebSocket] Command completed via _meta.completed');
               set({ isCommandLoading: false });
-            }
-            if (get().isProcessingTurn) {
-              console.log('[WebSocket] Turn processing completed via _meta.completed');
-              set({ isProcessingTurn: false });
             }
           }
 
@@ -333,6 +346,11 @@ export const useGameStore = create<GameStore>()(
               ...data.player,
             },
           }));
+
+          // Skip toast notifications on game reset (turn 0, or rank drops to Outsider)
+          const isGameReset = get().gameState.turn === 0 ||
+            (data.player.rank === 'Outsider' && prev.rank !== 'Outsider' && prev.rank !== undefined);
+          if (isGameReset) return;
 
           // Show toast notifications for significant state changes
           const current = data.player;
@@ -424,12 +442,13 @@ export const useGameStore = create<GameStore>()(
         }
 
         // Handle turn complete - signal that turn processing is done
+        // NOTE: Do NOT clear processingTurnTarget here. The TurnProcessingModal's
+        // completion useEffect checks processingTurnTarget !== null. If we clear
+        // it simultaneously with isProcessingTurn, the condition never triggers.
+        // processingTurnTarget is cleared when the modal is closed.
         if (data.type === 'turn_complete') {
           console.log('[WebSocket] Received turn_complete signal');
-          set({
-            isProcessingTurn: false,
-            processingTurnTarget: null,
-          });
+          set({ isProcessingTurn: false, retryInfo: null });
         }
 
         // Handle income report after turn
@@ -447,6 +466,44 @@ export const useGameStore = create<GameStore>()(
           if (get().isCommandLoading) {
             set({ isCommandLoading: false });
           }
+        }
+
+        // Handle retry events from server
+        if (data.type === 'retry_scheduled') {
+          console.log('[WebSocket] Retry scheduled:', data);
+          set({
+            retryInfo: {
+              attempt: data.attempt,
+              maxAttempts: data.maxAttempts,
+              delayMs: data.delayMs,
+              prompt: data.prompt || '',
+              status: 'scheduled',
+              message: data.message,
+            },
+          });
+          get().addToast('warning', `⏳ Rate limited. Retrying in ${Math.round(data.delayMs / 1000)}s (attempt ${data.attempt}/${data.maxAttempts})...`);
+        }
+
+        if (data.type === 'retrying') {
+          console.log('[WebSocket] Retrying now:', data);
+          set({
+            retryInfo: {
+              ...get().retryInfo!,
+              status: 'retrying',
+              attempt: data.attempt,
+              message: data.message,
+            },
+          });
+        }
+
+        if (data.type === 'retry_failed') {
+          console.log('[WebSocket] Retry failed (max attempts):', data);
+          set({
+            retryInfo: null,
+            isProcessingTurn: false,
+            isCommandLoading: false,
+          });
+          get().addToast('error', `❌ Command failed after ${data.attempt} retries: API rate limited`);
         }
       } catch (e) {
         // Not JSON, append as text
@@ -498,18 +555,10 @@ export const useGameStore = create<GameStore>()(
     const character = getCharacterById(args.target || args.recipient || args.character);
     const target = character ? character.fullName : args.target || args.recipient || args.character || 'System';
 
-    // Add local event for non-next-turn commands (next-turn events come from the engine)
+    // Don't add a local event immediately — the server logs the action to save.json
+    // and broadcasts it back via events_update, preventing duplicate/premature events.
     if (skill !== 'next-turn') {
       set(state => ({
-        events: [...state.events, {
-          id: Date.now().toString(),
-          turn: state.gameState.turn,
-          type: skill,
-          actor: state.player.name,
-          action: skill,
-          target: target,
-          description: `Executed /${skill}${target ? ' on ' + target : ''}`,
-        }],
         claudeOutput: state.claudeOutput + `> ${command}\n`,
       }));
     } else {

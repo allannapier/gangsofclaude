@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useGameStore } from '../store';
 import { SKILLS } from '../data/skills';
 
@@ -7,11 +7,18 @@ type CommandError = {
   type: 'error' | 'info';
 };
 
+// Action skills that count as the player's one action per turn
+const ACTION_SKILLS = ['seek-patronage', 'recruit', 'attack', 'intel', 'expand', 'claim'];
+
 export function CommandPalette() {
-  const { setCommandPaletteOpen, executeSkill, setDialogSkill } = useGameStore();
+  const { setCommandPaletteOpen, executeSkill, setDialogSkill, events, gameState } = useGameStore();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [submitError, setSubmitError] = useState<CommandError | null>(null);
+
+  const playerActedThisTurn = useMemo(() => {
+    return events.some(e => e.actor === 'Player' && e.turn === gameState.turn && e.action !== 'status' && e.action !== 'next-turn' && e.action !== 'message' && e.action !== 'promote');
+  }, [events, gameState.turn]);
 
   // Skills that need the dialog for parameter input
   const needsDialog = ['seek-patronage', 'recruit', 'attack', 'intel', 'expand', 'message'];
@@ -30,6 +37,11 @@ export function CommandPalette() {
     const knownSkill = SKILLS.find(s => s.id === skillId);
     if (!knownSkill) {
       return { valid: false, error: `Unknown command: /${skillId}` };
+    }
+
+    // Check if player already acted this turn
+    if (playerActedThisTurn && ACTION_SKILLS.includes(skillId)) {
+      return { valid: false, error: `You've already taken an action this turn. Advance to the next turn first.` };
     }
 
     // Check if the skill requires more arguments
@@ -122,6 +134,12 @@ export function CommandPalette() {
   };
 
   const handleSkillSelect = (skillId: string) => {
+    // Block action skills if player already acted this turn
+    if (playerActedThisTurn && ACTION_SKILLS.includes(skillId)) {
+      setSubmitError({ message: `You've already taken an action this turn. Advance to the next turn first.`, type: 'info' });
+      return;
+    }
+
     if (needsDialog.includes(skillId)) {
       // Close palette and open the parameter dialog
       setCommandPaletteOpen(false);
@@ -195,6 +213,13 @@ export function CommandPalette() {
           )}
         </div>
 
+        {/* Already acted this turn banner */}
+        {playerActedThisTurn && (
+          <div className="px-4 py-2 border-b bg-amber-900/20 border-amber-800/50">
+            <p className="text-sm text-amber-400">✓ You've already taken an action this turn. Use /status, /message, or advance to the next turn.</p>
+          </div>
+        )}
+
         {/* Error or info message */}
         {submitError && (
           <div className={`px-4 py-2 border-b ${submitError.type === 'error' ? 'bg-red-900/30 border-red-800' : 'bg-blue-900/30 border-blue-800'}`}>
@@ -209,28 +234,34 @@ export function CommandPalette() {
             <div className="py-8 text-center text-zinc-500">No commands found</div>
           ) : (
             <div className="space-y-1">
-              {filteredSkills.map((skill, index) => (
+              {filteredSkills.map((skill, index) => {
+                const isActionDisabled = playerActedThisTurn && ACTION_SKILLS.includes(skill.id);
+                return (
                 <button
                   key={skill.id}
                   onClick={() => handleSkillSelect(skill.id)}
+                  disabled={isActionDisabled}
                   className={`w-full px-4 py-3 rounded-lg text-left transition-colors ${
-                    index === selectedIndex ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'
+                    isActionDisabled
+                      ? 'opacity-40 cursor-not-allowed'
+                      : index === selectedIndex ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <code className="px-2 py-1 bg-zinc-800 rounded text-sm text-amber-400">
+                      <code className={`px-2 py-1 bg-zinc-800 rounded text-sm ${isActionDisabled ? 'text-zinc-600' : 'text-amber-400'}`}>
                         /{skill.id}
                       </code>
                       <span className="font-medium">{skill.name}</span>
                     </div>
                     <span className="text-xs px-2 py-1 bg-zinc-800 rounded text-zinc-500">
-                      {skill.category}
+                      {isActionDisabled ? '✓ acted' : skill.category}
                     </span>
                   </div>
                   <p className="text-sm text-zinc-500 mt-1 ml-14">{skill.description}</p>
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
