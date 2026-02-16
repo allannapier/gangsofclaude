@@ -11,7 +11,34 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { writeFileSync, readFileSync, existsSync, watch } from 'fs';
-import { calculateTurnIncome, calculateActionReward } from './mechanics';
+import { calculateTurnIncome, calculateActionReward, resolveAssassination } from './mechanics';
+
+// Character data for death resolution (mirrors client/src/data/families.ts)
+interface CharacterInfo { id: string; fullName: string; role: string; family: string; }
+const ALL_CHARACTERS: CharacterInfo[] = [
+  { id: 'marinelli_vito', fullName: 'Vito Marinelli', role: 'Don', family: 'marinelli' },
+  { id: 'marinelli_salvatore', fullName: 'Salvatore Marinelli', role: 'Underboss', family: 'marinelli' },
+  { id: 'marinelli_bruno', fullName: 'Bruno Marinelli', role: 'Consigliere', family: 'marinelli' },
+  { id: 'marinelli_marco', fullName: 'Marco Marinelli', role: 'Capo', family: 'marinelli' },
+  { id: 'marinelli_luca', fullName: 'Luca Marinelli', role: 'Soldier', family: 'marinelli' },
+  { id: 'marinelli_enzo', fullName: 'Enzo Marinelli', role: 'Associate', family: 'marinelli' },
+  { id: 'rossetti_marco', fullName: 'Marco Rossetti', role: 'Don', family: 'rossetti' },
+  { id: 'rossetti_carla', fullName: 'Carla Rossetti', role: 'Underboss', family: 'rossetti' },
+  { id: 'rossetti_antonio', fullName: 'Antonio Rossetti', role: 'Consigliere', family: 'rossetti' },
+  { id: 'rossetti_franco', fullName: 'Franco Rossetti', role: 'Capo', family: 'rossetti' },
+  { id: 'rossetti_maria', fullName: 'Maria Rossetti', role: 'Soldier', family: 'rossetti' },
+  { id: 'rossetti_paolo', fullName: 'Paolo Rossetti', role: 'Associate', family: 'rossetti' },
+  { id: 'falcone_sofia', fullName: 'Sofia Falcone', role: 'Don', family: 'falcone' },
+  { id: 'falcone_victor', fullName: 'Victor Falcone', role: 'Underboss', family: 'falcone' },
+  { id: 'falcone_dante', fullName: 'Dante Falcone', role: 'Consigliere', family: 'falcone' },
+  { id: 'falcone_iris', fullName: 'Iris Falcone', role: 'Capo', family: 'falcone' },
+  { id: 'falcone_leo', fullName: 'Leo Falcone', role: 'Soldier', family: 'falcone' },
+  { id: 'moretti_antonio', fullName: 'Antonio Moretti', role: 'Don', family: 'moretti' },
+  { id: 'moretti_giovanni', fullName: 'Giovanni Moretti', role: 'Underboss', family: 'moretti' },
+  { id: 'moretti_elena', fullName: 'Elena Moretti', role: 'Consigliere', family: 'moretti' },
+  { id: 'moretti_ricardo', fullName: 'Ricardo Moretti', role: 'Capo', family: 'moretti' },
+  { id: 'moretti_carlo', fullName: 'Carlo Moretti', role: 'Soldier', family: 'moretti' },
+];
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -113,6 +140,7 @@ function readAndBroadcastSaveData() {
               turn: saveData.turn,
               phase: saveData.phase || 'playing',
               territoryOwnership: saveData.territoryOwnership || {},
+              deceased: saveData.deceased || [],
             },
           }));
         }
@@ -398,6 +426,7 @@ Bun.serve({
                     phase: saveData.phase || 'playing',
                     families: saveData.families,
                     territoryOwnership: saveData.territoryOwnership || {},
+                    deceased: saveData.deceased || [],
                   },
                 }));
               }
@@ -455,6 +484,7 @@ Bun.serve({
                       phase: saveData.phase || 'playing',
                       families: saveData.families,
                       territoryOwnership: saveData.territoryOwnership || {},
+                      deceased: saveData.deceased || [],
                     },
                   }));
                 }
@@ -489,6 +519,7 @@ Bun.serve({
                       phase: saveData.phase || 'playing',
                       families: saveData.families,
                       territoryOwnership: saveData.territoryOwnership || {},
+                      deceased: saveData.deceased || [],
                     },
                   }));
                 }
@@ -620,6 +651,7 @@ Bun.serve({
                           phase: saveData.phase || 'playing',
                           families: saveData.families,
                           territoryOwnership: saveData.territoryOwnership || {},
+                          deceased: saveData.deceased || [],
                         },
                       }));
                     }
@@ -752,6 +784,7 @@ Bun.serve({
                               phase: saveData.phase || 'playing',
                               families: saveData.families,
                               territoryOwnership: saveData.territoryOwnership || {},
+                              deceased: saveData.deceased || [],
                             },
                           }));
                         }
@@ -825,6 +858,88 @@ Bun.serve({
                       }
                     } catch (incomeErr) {
                       console.error('Error applying turn income:', incomeErr);
+                    }
+                  }
+
+                  // Process deaths from combat events this turn
+                  if (isNextTurnResult && existsSync(saveJsonPath)) {
+                    try {
+                      const deathState = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
+                      const currentTurn = deathState.turn || 0;
+                      const deceased: string[] = deathState.deceased || [];
+                      const deceasedSet = new Set(deceased);
+                      const turnEvents = (deathState.events || []).filter((e: any) => e.turn === currentTurn);
+                      let deathsThisTurn = 0;
+
+                      // Check attack events for potential casualties
+                      for (const event of turnEvents) {
+                        const action = (event.action || '').toLowerCase();
+                        if (!['attack', 'plan_attack', 'eliminate'].includes(action)) continue;
+                        
+                        const target = (event.target || '').toLowerCase();
+                        if (!target) continue;
+                        
+                        // 8% chance per attack that a named character is a casualty
+                        const roll = Math.random() * 100;
+                        if (roll > 8) continue;
+                        
+                        // Find a living member of the target family
+                        const eligibleMembers = ALL_CHARACTERS.filter(m => 
+                          m.family === target && !deceasedSet.has(m.id) && m.role !== 'Don'
+                        );
+                        if (eligibleMembers.length === 0) continue;
+                        
+                        const victimIdx = Math.floor(Math.random() * eligibleMembers.length);
+                        const victim = eligibleMembers[victimIdx];
+                        const familyName = target.charAt(0).toUpperCase() + target.slice(1);
+                        
+                        // Mark as deceased
+                        deceased.push(victim.id);
+                        deceasedSet.add(victim.id);
+                        deathsThisTurn++;
+                        
+                        // Log death event
+                        deathState.events.push({
+                          turn: currentTurn,
+                          type: 'death',
+                          actor: event.actor,
+                          action: 'eliminate',
+                          target: victim.id,
+                          description: `${victim.fullName} was killed in the attack by ${event.actor}`,
+                          result: `💀 ${victim.fullName} (${victim.role}) of the ${familyName} family has been eliminated`,
+                          outcome: 'death',
+                        });
+                        
+                        // Reduce family soldier count
+                        const familyKey = Object.keys(deathState.families || {}).find(
+                          k => k.toLowerCase() === target
+                        );
+                        if (familyKey && deathState.families[familyKey]) {
+                          deathState.families[familyKey].soldiers = Math.max(0, 
+                            (deathState.families[familyKey].soldiers || 0) - 1
+                          );
+                        }
+                        
+                        console.log(`💀 ${victim.fullName} killed by ${event.actor}'s attack on ${familyName}`);
+                      }
+                      
+                      if (deathsThisTurn > 0) {
+                        deathState.deceased = deceased;
+                        writeFileSync(saveJsonPath, JSON.stringify(deathState, null, 2));
+                        console.log(`☠️ ${deathsThisTurn} casualties this turn`);
+                        
+                        // Broadcast deceased update to browsers
+                        for (const [id, client] of browserClients) {
+                          if (client.readyState === WebSocket.OPEN) {
+                            client.send(JSON.stringify({
+                              type: 'deceased_update',
+                              deceased: deceased,
+                            }));
+                          }
+                        }
+                      }
+                    } catch (deathErr) {
+                      console.error('Error processing deaths:', deathErr);
                     }
                   }
 

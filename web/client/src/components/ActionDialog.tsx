@@ -9,7 +9,7 @@ interface ActionDialogProps {
 }
 
 export function ActionDialog({ skill, onClose }: ActionDialogProps) {
-  const { selectedCharacter, executeSkill, selectedTerritory, player } = useGameStore();
+  const { selectedCharacter, executeSkill, selectedTerritory, player, families } = useGameStore();
   const [amount, setAmount] = useState<'small' | 'medium' | 'large'>('medium');
   const [attackType, setAttackType] = useState<'assassinate' | 'beatdown' | 'business' | 'territory'>('beatdown');
   const [intelType, setIntelType] = useState<'spy' | 'steal' | 'blackmail' | 'survey'>('survey');
@@ -36,8 +36,8 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
   // Filter characters based on skill context
   const filteredCharacters = useMemo(() => {
     const playerFamily = player.family?.toLowerCase();
-    const allChars = FAMILIES.flatMap(f =>
-      f.members.map(m => ({ ...m, familyName: f.name }))
+    const allChars = families.flatMap(f =>
+      f.members.filter(m => m.alive).map(m => ({ ...m, familyName: f.name }))
     );
 
     switch (skill) {
@@ -155,7 +155,7 @@ export function ActionDialog({ skill, onClose }: ActionDialogProps) {
                 className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-md text-sm appearance-none cursor-pointer"
               >
                 <option value="">— Select a character —</option>
-                {FAMILIES.map(family => {
+                {families.map(family => {
                   const chars = filteredCharacters.filter(c => c.family === family.id);
                   if (chars.length === 0) return null;
                   return (

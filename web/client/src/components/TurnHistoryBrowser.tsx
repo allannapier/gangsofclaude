@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useGameStore } from '../store';
 import {
   Swords,
   UserPlus,
@@ -59,6 +60,8 @@ const actionIcons: Record<string, React.ReactNode> = {
   investigate: <Target className="w-4 h-4" />,
   gather_intel: <Eye className="w-4 h-4" />,
   eliminate: <Skull className="w-4 h-4" />,
+  death: <Skull className="w-4 h-4" />,
+  assassinate: <Skull className="w-4 h-4" />,
   leverage: <Coins className="w-4 h-4" />,
   negotiate: <MessageSquare className="w-4 h-4" />,
   reach_out: <MessageSquare className="w-4 h-4" />,
@@ -67,6 +70,14 @@ const actionIcons: Record<string, React.ReactNode> = {
   support: <Shield className="w-4 h-4" />,
   approve: <Scroll className="w-4 h-4" />,
   wait: <Circle className="w-4 h-4" />,
+  hold: <Shield className="w-4 h-4" />,
+  income: <Coins className="w-4 h-4" />,
+  intel: <Eye className="w-4 h-4" />,
+  spy: <Eye className="w-4 h-4" />,
+  survey: <Eye className="w-4 h-4" />,
+  claim: <MapPin className="w-4 h-4" />,
+  status: <Target className="w-4 h-4" />,
+  'seek-patronage': <UserPlus className="w-4 h-4" />,
   infiltrate: <MapPin className="w-4 h-4" />,
 };
 
@@ -74,9 +85,12 @@ const actionColors: Record<string, string> = {
   attack: 'bg-red-500/20 text-red-400 border-red-500/30',
   plan_attack: 'bg-red-500/20 text-red-400 border-red-500/30',
   eliminate: 'bg-red-900/30 text-red-300 border-red-700/30',
+  death: 'bg-red-900/30 text-red-300 border-red-700/30',
+  assassinate: 'bg-red-900/30 text-red-300 border-red-700/30',
   recruit: 'bg-green-500/20 text-green-400 border-green-500/30',
   train: 'bg-green-500/20 text-green-400 border-green-500/30',
   expand: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+  claim: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
   message: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
   advise: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
   report: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
@@ -84,14 +98,21 @@ const actionColors: Record<string, string> = {
   surveillance: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
   investigate: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
   gather_intel: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+  intel: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+  spy: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+  survey: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
   analyze: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
   guard: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
   prepare_defense: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
   support: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
+  hold: 'bg-zinc-600/20 text-zinc-400 border-zinc-600/30',
   negotiate: 'bg-pink-500/20 text-pink-400 border-pink-500/30',
   reach_out: 'bg-pink-500/20 text-pink-400 border-pink-500/30',
   leverage: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+  income: 'bg-green-600/20 text-green-400 border-green-600/30',
   approve: 'bg-green-600/20 text-green-400 border-green-600/30',
+  status: 'bg-zinc-600/20 text-zinc-400 border-zinc-600/30',
+  'seek-patronage': 'bg-purple-600/20 text-purple-400 border-purple-600/30',
   wait: 'bg-zinc-600/20 text-zinc-400 border-zinc-600/30',
   default: 'bg-zinc-600/20 text-zinc-400 border-zinc-600/30',
 };
@@ -138,12 +159,204 @@ function formatDescription(desc: string): string {
     .replace(/,\s*Target:\s*/g, ' → ');
 }
 
+/**
+ * Generate a human-readable narrative from event data.
+ * Falls back to cleaned description if no better narrative can be built.
+ */
+function cleanFamilyTarget(target: string): string {
+  if (!target || target === 'System' || target === 'system') return '';
+  // Remove trailing "Family" to avoid "Rossetti Family family"
+  let clean = target.replace(/\s+[Ff]amily$/i, '').trim();
+  // Capitalize first letter
+  return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+function generateEventNarrative(event: GameEvent): string {
+  const actor = event.actor || 'Unknown';
+  const action = typeof event.action === 'string' ? event.action : 'unknown';
+  const target = event.target || '';
+  const char = getCharacterFromActor(actor);
+  const actorFamily = char?.family || '';
+  const actorRole = char?.role || '';
+  const isPlayer = actor === 'Player' || actor === 'You';
+  const actorShort = isPlayer ? 'You' : actor.split(' ')[0]; // First name
+
+  // If there's a rich result, use it directly
+  if (event.result && event.result.length > 20 && !event.result.startsWith('💰')) {
+    return event.result;
+  }
+
+  // Build narrative based on action type
+  switch (action) {
+    case 'attack':
+    case 'plan_attack': {
+      const tf = cleanFamilyTarget(target);
+      if (tf) return `${actorShort} launched an attack against the ${tf} family`;
+      return `${actorShort} prepared an offensive operation`;
+    }
+
+    case 'recruit':
+    case 'train':
+      if (target === actorFamily) {
+        return `${actorShort} recruited new members and strengthened the ranks`;
+      }
+      return `${actorShort} attempted to recruit from outside the family`;
+
+    case 'expand':
+      return `${actorShort} expanded ${actorFamily ? actorFamily.charAt(0).toUpperCase() + actorFamily.slice(1) : 'family'} territory and business operations`;
+
+    case 'intel':
+    case 'spy':
+    case 'gather_intel':
+    case 'investigate':
+    case 'analyze':
+    case 'survey':
+    case 'surveillance':
+    case 'scout': {
+      const tf = cleanFamilyTarget(target);
+      if (tf && target !== actorFamily) {
+        return `${actorShort} gathered intelligence on the ${tf} family`;
+      }
+      return `${actorShort} conducted surveillance operations`;
+    }
+
+    case 'message':
+    case 'advise':
+    case 'report':
+    case 'negotiate':
+    case 'reach_out': {
+      if (target === actorFamily) {
+        return `${actorShort} communicated with family leadership`;
+      }
+      const tf = cleanFamilyTarget(target);
+      if (tf) return `${actorShort} sent a message to the ${tf} family`;
+      return `${actorShort} coordinated with allies`;
+    }
+
+    case 'hold':
+    case 'wait':
+      return `${actorShort} held position and consolidated power`;
+
+    case 'guard':
+    case 'prepare_defense':
+    case 'support':
+      return `${actorShort} fortified defenses and protected territory`;
+
+    case 'eliminate':
+    case 'death':
+    case 'assassinate':
+      if (event.result) return event.result;
+      return `${actorShort} carried out an elimination operation`;
+
+    case 'leverage':
+      return `${actorShort} leveraged contacts for advantage`;
+
+    case 'claim':
+      return `${actorShort} claimed new territory for the family`;
+
+    case 'income':
+      return event.result || `Collected income from operations`;
+
+    case 'status':
+      return 'Checked current status and standings';
+
+    case 'seek-patronage':
+      return `${actorShort} sought to join a crime family`;
+
+    default:
+      // Fall back to cleaned description
+      if (event.description) return formatDescription(event.description);
+      return `${actorShort} took action: ${action}`;
+  }
+}
+
+/**
+ * Generate a Turn Summary — key events that matter to the player
+ */
+interface TurnSummary {
+  attacksOnYourFamily: GameEvent[];
+  attacksByYourFamily: GameEvent[];
+  territoryChanges: GameEvent[];
+  intelGathered: GameEvent[];
+  recruiting: GameEvent[];
+  income: GameEvent[];
+  playerActions: GameEvent[];
+  totalActions: number;
+  threatLevel: 'none' | 'low' | 'medium' | 'high';
+}
+
+function generateTurnSummary(turnEvents: GameEvent[], playerFamily: string): TurnSummary {
+  const lowerFamily = playerFamily?.toLowerCase() || '';
+  const summary: TurnSummary = {
+    attacksOnYourFamily: [],
+    attacksByYourFamily: [],
+    territoryChanges: [],
+    intelGathered: [],
+    recruiting: [],
+    income: [],
+    playerActions: [],
+    totalActions: turnEvents.length,
+    threatLevel: 'none',
+  };
+
+  for (const event of turnEvents) {
+    const action = typeof event.action === 'string' ? event.action : '';
+    const target = (event.target || '').toLowerCase();
+    const actor = event.actor || '';
+    const char = getCharacterFromActor(actor);
+    const actorFamily = (char?.family || '').toLowerCase();
+    const isPlayer = actor === 'Player' || actor === 'You' || actor === 'System';
+
+    if (isPlayer) {
+      if (action === 'income') summary.income.push(event);
+      else summary.playerActions.push(event);
+      continue;
+    }
+
+    if (['attack', 'plan_attack', 'eliminate', 'death', 'assassinate'].includes(action)) {
+      // Death events may target a character_id (e.g. "marinelli_luca") instead of family
+      const targetIsOurFamily = target === lowerFamily || target.startsWith(lowerFamily + '_');
+      if (targetIsOurFamily) {
+        summary.attacksOnYourFamily.push(event);
+      } else if (actorFamily === lowerFamily) {
+        summary.attacksByYourFamily.push(event);
+      }
+    }
+
+    if (['expand', 'claim'].includes(action)) {
+      summary.territoryChanges.push(event);
+    }
+
+    if (['intel', 'spy', 'gather_intel', 'scout', 'surveillance', 'investigate', 'survey'].includes(action)) {
+      if (target === lowerFamily) {
+        // Someone spying on YOUR family — that's a threat
+        summary.attacksOnYourFamily.push(event);
+      } else if (actorFamily === lowerFamily) {
+        summary.intelGathered.push(event);
+      }
+    }
+
+    if (['recruit', 'train'].includes(action)) {
+      summary.recruiting.push(event);
+    }
+  }
+
+  // Calculate threat level
+  const threats = summary.attacksOnYourFamily.length;
+  if (threats >= 3) summary.threatLevel = 'high';
+  else if (threats >= 2) summary.threatLevel = 'medium';
+  else if (threats >= 1) summary.threatLevel = 'low';
+
+  return summary;
+}
+
 function getRankFromActor(actorName: string): string {
   const char = getCharacterFromActor(actorName);
   return char?.role || 'Player';
 }
 
 export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefresh }: TurnHistoryBrowserProps) {
+  const { player } = useGameStore();
   const [viewingTurn, setViewingTurn] = useState(currentTurn);
   const [familyFilter, setFamilyFilter] = useState<string>('all');
   const [rankFilter, setRankFilter] = useState<string>('all');
@@ -212,6 +425,12 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
 
     return grouped;
   }, [filteredEvents]);
+
+  // Turn summary for the currently viewed turn
+  const turnSummary = useMemo(() => {
+    const turnEvents = events.filter(e => e.turn === viewingTurn);
+    return generateTurnSummary(turnEvents, player.family);
+  }, [events, viewingTurn, player.family]);
 
   const uniqueActions = useMemo(() => {
     const actions = new Set<string>();
@@ -399,6 +618,68 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
         </div>
       </div>
 
+      {/* Turn Summary Banner */}
+      {filteredEvents.length > 0 && !hasFilters && turnSummary.totalActions > 1 && (
+        <div className="mx-4 mt-3 mb-1 p-3 bg-zinc-900/80 border border-zinc-800 rounded-xl space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Turn {viewingTurn} Summary</h3>
+            {turnSummary.threatLevel !== 'none' && (
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                turnSummary.threatLevel === 'high' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
+                turnSummary.threatLevel === 'medium' ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' :
+                'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+              }`}>
+                {turnSummary.threatLevel === 'high' ? '🔴 High Threat' :
+                 turnSummary.threatLevel === 'medium' ? '🟠 Under Pressure' :
+                 '🟡 Rival Activity'}
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2 text-xs">
+            {turnSummary.attacksOnYourFamily.length > 0 && (
+              <span className="px-2 py-1 bg-red-500/15 text-red-400 rounded-md border border-red-500/20">
+                ⚔️ {turnSummary.attacksOnYourFamily.length} {turnSummary.attacksOnYourFamily.length === 1 ? 'threat' : 'threats'} against your family
+              </span>
+            )}
+            {turnSummary.attacksByYourFamily.length > 0 && (
+              <span className="px-2 py-1 bg-emerald-500/15 text-emerald-400 rounded-md border border-emerald-500/20">
+                🗡️ {turnSummary.attacksByYourFamily.length} {turnSummary.attacksByYourFamily.length === 1 ? 'attack' : 'attacks'} by your family
+              </span>
+            )}
+            {turnSummary.territoryChanges.length > 0 && (
+              <span className="px-2 py-1 bg-purple-500/15 text-purple-400 rounded-md border border-purple-500/20">
+                📍 {turnSummary.territoryChanges.length} territory {turnSummary.territoryChanges.length === 1 ? 'move' : 'moves'}
+              </span>
+            )}
+            {turnSummary.intelGathered.length > 0 && (
+              <span className="px-2 py-1 bg-blue-500/15 text-blue-400 rounded-md border border-blue-500/20">
+                🕵️ {turnSummary.intelGathered.length} intel {turnSummary.intelGathered.length === 1 ? 'op' : 'ops'} by allies
+              </span>
+            )}
+            {turnSummary.income.length > 0 && (
+              <span className="px-2 py-1 bg-green-500/15 text-green-400 rounded-md border border-green-500/20">
+                💰 Income collected
+              </span>
+            )}
+            {turnSummary.totalActions > 0 && turnSummary.attacksOnYourFamily.length === 0 && turnSummary.attacksByYourFamily.length === 0 && turnSummary.territoryChanges.length === 0 && (
+              <span className="px-2 py-1 bg-zinc-700/50 text-zinc-400 rounded-md border border-zinc-600/20">
+                🕊️ Quiet turn — {turnSummary.totalActions} routine actions
+              </span>
+            )}
+          </div>
+
+          {/* Key threats narrative */}
+          {turnSummary.attacksOnYourFamily.length > 0 && (
+            <div className="text-xs text-red-400/80 pl-1 space-y-0.5">
+              {turnSummary.attacksOnYourFamily.map((evt, i) => (
+                <p key={i}>• {generateEventNarrative(evt)}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Events List */}
       <div className="flex-1 overflow-auto p-4 space-y-4">
         {filteredEvents.length === 0 ? (
@@ -491,10 +772,10 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
                             </div>
 
                             <p className="text-sm text-zinc-400 leading-relaxed">
-                              {formatDescription(event.description)}
+                              {generateEventNarrative(event)}
                             </p>
 
-                            {event.result && (
+                            {event.result && event.action !== 'income' && (
                               <p className="text-xs text-zinc-500 mt-1 italic">
                                 {event.result}
                               </p>

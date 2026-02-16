@@ -4,6 +4,19 @@ import type { SkillCommand, Family, GameState, GameEvent } from '../types';
 import { getCharacterById } from '../data/families';
 import { FAMILIES } from '../data/families';
 
+/** Apply deceased status to the static families data */
+function applyDeceasedState(deceasedIds: string[]): Family[] {
+  if (!deceasedIds || deceasedIds.length === 0) return FAMILIES;
+  const deceasedSet = new Set(deceasedIds);
+  return FAMILIES.map(family => ({
+    ...family,
+    members: family.members.map(member => ({
+      ...member,
+      alive: deceasedSet.has(member.id) ? false : member.alive,
+    })),
+  }));
+}
+
 interface GameStore {
   // Connection state
   connected: boolean;
@@ -48,6 +61,7 @@ interface GameStore {
   processingTurnTarget: number | null;
   setIsProcessingTurn: (processing: boolean) => void;
   lastIncomeReport: any | null;
+  deceased: string[]; // Character IDs of dead characters
 
   // Actions
   connect: () => void;
@@ -137,6 +151,7 @@ export const useGameStore = create<GameStore>()(
       isProcessingTurn: false,
       processingTurnTarget: null,
       lastIncomeReport: null,
+      deceased: [],
 
       // Tasks
       tasks: [],
@@ -359,6 +374,33 @@ export const useGameStore = create<GameStore>()(
               ...data.gameState,
             },
           }));
+          // If deceased list included, update families
+          if (data.gameState.deceased) {
+            const deceasedList = data.gameState.deceased as string[];
+            set({
+              deceased: deceasedList,
+              families: applyDeceasedState(deceasedList),
+            });
+          }
+        }
+
+        // Handle deceased update (character deaths)
+        if (data.type === 'deceased_update' && data.deceased) {
+          console.log('[WebSocket] Deceased update:', data.deceased);
+          const deceasedList = data.deceased as string[];
+          set({
+            deceased: deceasedList,
+            families: applyDeceasedState(deceasedList),
+          });
+          // Show death notifications for newly deceased
+          const prev = get().deceased;
+          const newDeaths = deceasedList.filter(id => !prev.includes(id));
+          for (const id of newDeaths) {
+            const char = getCharacterById(id);
+            if (char) {
+              get().addToast('error', `💀 ${char.fullName} has been eliminated`);
+            }
+          }
         }
 
         // Handle tasks updates from server

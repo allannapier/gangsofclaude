@@ -12,6 +12,7 @@ export interface GameState {
   territoryOwnership: Record<string, string>;
   events: GameEvent[];
   messages: Message[];
+  deceased?: string[]; // Character IDs of dead characters
 }
 
 export interface PlayerState {
@@ -49,6 +50,78 @@ export interface CombatResult {
     territory: number;
     wealth: number;
     respect: number;
+  };
+  assassination?: {
+    success: boolean;
+    victimId: string;
+    victimName: string;
+  };
+}
+
+export interface AssassinationResult {
+  success: boolean;
+  victimId: string;
+  victimName: string;
+  reward: number;
+  respectGain: number;
+  description: string;
+}
+
+/**
+ * Resolve an assassination attempt against a specific character.
+ * Success depends on attacker rank, target rank, and random chance.
+ */
+export function resolveAssassination(
+  attackerRank: string,
+  targetId: string,
+  targetName: string,
+  targetRank: string,
+  randomSeed: number = Math.random() * 100
+): AssassinationResult {
+  // Base success chance by attacker rank
+  const rankChance: Record<string, number> = {
+    'Associate': 20,
+    'Soldier': 35,
+    'Capo': 50,
+    'Underboss': 60,
+    'Don': 70,
+  };
+  // Target rank makes it harder
+  const rankDefense: Record<string, number> = {
+    'Associate': 0,
+    'Soldier': 5,
+    'Capo': 15,
+    'Underboss': 25,
+    'Don': 35,
+  };
+
+  const baseChance = rankChance[attackerRank] || 30;
+  const defense = rankDefense[targetRank] || 10;
+  const successChance = Math.max(10, baseChance - defense);
+
+  const roll = Math.floor(randomSeed % 100);
+  const success = roll < successChance;
+
+  if (success) {
+    const reward = targetRank === 'Don' ? 500 : targetRank === 'Underboss' ? 300 : targetRank === 'Capo' ? 200 : 100;
+    const respect = targetRank === 'Don' ? 15 : targetRank === 'Underboss' ? 10 : 5;
+    return {
+      success: true,
+      victimId: targetId,
+      victimName: targetName,
+      reward,
+      respectGain: respect,
+      description: `${targetName} has been eliminated. The streets will remember this.`,
+    };
+  }
+
+  return {
+    success: false,
+    victimId: targetId,
+    victimName: targetName,
+    reward: 0,
+    respectGain: -3,
+    description: `The assassination attempt on ${targetName} failed. They'll be looking for payback.`,
   };
 }
 

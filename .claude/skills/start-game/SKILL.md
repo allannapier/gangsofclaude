@@ -87,11 +87,12 @@ Create/overwrite `.claude/game-state/save.json` with initial state:
     "Old Town": "moretti"
   },
   "events": [],
-  "messages": []
+  "messages": [],
+  "deceased": []
 }
 ```
 
-**IMPORTANT:** The `events` array must be initialized as an empty array `[]`. This is where all character actions will be logged during turns.
+**IMPORTANT:** The `events` array must be initialized as an empty array `[]`. This is where all character actions will be logged during turns. The `deceased` array tracks eliminated character IDs and must be reset to `[]` on new game.
 
 ## Next Steps
 

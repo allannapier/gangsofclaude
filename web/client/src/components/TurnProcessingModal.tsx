@@ -275,32 +275,60 @@ export function TurnProcessingModal({ isOpen, onClose }: TurnProcessingModalProp
             <div className="bg-zinc-800/50 rounded-xl p-4 mb-4 min-h-[120px] flex flex-col justify-center border border-zinc-700/50">
               <p className="text-xs text-zinc-500 uppercase tracking-wider mb-3">Turn Summary</p>
 
-              <div className="text-center mb-4">
-                <p className="text-3xl font-bold text-green-400 mb-1">{completedActions.length}</p>
-                <p className="text-sm text-zinc-400">actions completed</p>
-              </div>
+              {(() => {
+                // Build narrative summary
+                const attacks = completedActions.filter(a => ['attack', 'plan_attack', 'eliminate'].includes(a.action));
+                const expands = completedActions.filter(a => ['expand', 'claim'].includes(a.action));
+                const intel = completedActions.filter(a => ['intel', 'spy', 'scout', 'surveillance', 'gather_intel', 'survey'].includes(a.action));
+                const recruits = completedActions.filter(a => ['recruit', 'train'].includes(a.action));
+                const messages = completedActions.filter(a => ['message', 'advise', 'report', 'negotiate'].includes(a.action));
+                const income = completedActions.filter(a => a.action === 'income');
 
-              {/* Action breakdown by type */}
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                {(() => {
-                  const actionCounts = completedActions.reduce((acc, a) => {
-                    const type = a.action.split('_')[0]; // Get base action type
-                    acc[type] = (acc[type] || 0) + 1;
-                    return acc;
-                  }, {} as Record<string, number>);
+                const highlights: { icon: string; text: string; color: string }[] = [];
 
-                  const topActions = Object.entries(actionCounts)
-                    .sort(([, a], [, b]) => b - a)
-                    .slice(0, 6);
+                if (attacks.length > 0) highlights.push({
+                  icon: '⚔️', text: `${attacks.length} ${attacks.length === 1 ? 'attack' : 'attacks'} across the city`, color: 'text-red-400'
+                });
+                if (expands.length > 0) highlights.push({
+                  icon: '📍', text: `${expands.length} territory ${expands.length === 1 ? 'move' : 'moves'}`, color: 'text-purple-400'
+                });
+                if (intel.length > 0) highlights.push({
+                  icon: '🕵️', text: `${intel.length} espionage ${intel.length === 1 ? 'operation' : 'operations'}`, color: 'text-blue-400'
+                });
+                if (recruits.length > 0) highlights.push({
+                  icon: '👥', text: `${recruits.length} recruitment ${recruits.length === 1 ? 'effort' : 'efforts'}`, color: 'text-green-400'
+                });
+                if (messages.length > 0) highlights.push({
+                  icon: '✉️', text: `${messages.length} ${messages.length === 1 ? 'message' : 'messages'} exchanged`, color: 'text-blue-300'
+                });
+                if (income.length > 0) {
+                  const incomeEvent = income[0];
+                  highlights.push({
+                    icon: '💰', text: incomeEvent.description || 'Income collected', color: 'text-green-400'
+                  });
+                }
 
-                  return topActions.map(([type, count]) => (
-                    <div key={type} className="bg-zinc-900/50 rounded px-2 py-1 text-center">
-                      <span className="text-amber-400 font-medium">{count}</span>
-                      <span className="text-zinc-500 ml-1">{type}</span>
+                if (highlights.length === 0) {
+                  highlights.push({ icon: '🕊️', text: 'A quiet turn across the city', color: 'text-zinc-400' });
+                }
+
+                return (
+                  <div className="space-y-2">
+                    <div className="text-center mb-3">
+                      <p className="text-2xl font-bold text-zinc-200 mb-0.5">{completedActions.length} moves made</p>
+                      <p className="text-xs text-zinc-500">across all 4 families</p>
                     </div>
-                  ));
-                })()}
-              </div>
+                    <div className="space-y-1.5">
+                      {highlights.map((h, i) => (
+                        <div key={i} className={`flex items-center gap-2 text-sm ${h.color}`}>
+                          <span>{h.icon}</span>
+                          <span>{h.text}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Success message */}
@@ -308,7 +336,7 @@ export function TurnProcessingModal({ isOpen, onClose }: TurnProcessingModalProp
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
-              <span className="text-sm font-medium">Turn complete!</span>
+              <span className="text-sm font-medium">Check the timeline for details</span>
             </div>
 
             {/* Close instruction */}
