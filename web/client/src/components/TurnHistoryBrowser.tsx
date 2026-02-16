@@ -775,7 +775,8 @@ export function TurnHistoryBrowser({ events, currentTurn, onTurnChange, onRefres
                               {generateEventNarrative(event)}
                             </p>
 
-                            {event.result && event.action !== 'income' && (
+                            {event.result && event.action !== 'income' && 
+                              generateEventNarrative(event) !== event.result && (
                               <p className="text-xs text-zinc-500 mt-1 italic">
                                 {event.result}
                               </p>

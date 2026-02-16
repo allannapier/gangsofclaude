@@ -8,10 +8,21 @@ export function DetailsPanel() {
     selectedFamily,
     selectedTerritory,
     setDialogSkill,
+    families: storeFamilies,
   } = useGameStore();
 
-  const character = selectedCharacter ? getCharacterById(selectedCharacter) : null;
-  const family = selectedFamily ? getFamilyById(selectedFamily) : null;
+  // Use store families (death-aware) with fallback to static data
+  const getFamilyFromStore = (id: string) => storeFamilies.find(f => f.id === id) || getFamilyById(id);
+  const getCharacterFromStore = (id: string) => {
+    for (const f of storeFamilies) {
+      const m = f.members.find(m => m.id === id);
+      if (m) return m;
+    }
+    return getCharacterById(id);
+  };
+
+  const character = selectedCharacter ? getCharacterFromStore(selectedCharacter) : null;
+  const family = selectedFamily ? getFamilyFromStore(selectedFamily) : null;
 
   // Priority: Character > Territory > Family > Empty state
 
