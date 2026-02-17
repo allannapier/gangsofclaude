@@ -118,11 +118,10 @@ Browser (React + Zustand) ←→ WebSocket ←→ Bun/Hono Server (port 3456) �
 | `web/server/ai-prompts.ts` | Builds rich prompts per AI family |
 | `web/server/dev.ts` | Dev server entry |
 
-### Claude Code Features
+### Implementation
 
-- **Skills** (`/start-game`, `/next-turn`, `/status`) for game commands
-- **Agents** (4 family personality definitions) for LLM-driven AI decisions
-- **Game state** persisted in `.claude/game-state/save.json`
+- **Agents** — 4 family personality definitions (`.claude/agents/`) drive LLM AI decisions
+- **Game state** — Persisted in `.claude/game-state/save.json`
 
 ## License
 
