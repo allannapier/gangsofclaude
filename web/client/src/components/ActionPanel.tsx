@@ -111,9 +111,10 @@ export function ActionPanel() {
 
 function HireForm({ myTerritories }: { myTerritories: any[] }) {
   const { performAction, setSelectedAction, selectedTerritoryId } = useGameStore();
-  const [count, setCount] = useState(1);
+  const [countStr, setCountStr] = useState('1');
   const initial = myTerritories.find(t => t.id === selectedTerritoryId)?.id || myTerritories[0]?.id || '';
   const [territoryId, setTerritoryId] = useState(initial);
+  const count = Math.max(1, Math.min(parseInt(countStr, 10) || 1, 10));
 
   return (
     <div className="space-y-2 p-3 bg-zinc-900 rounded border border-zinc-700">
@@ -122,7 +123,7 @@ function HireForm({ myTerritories }: { myTerritories: any[] }) {
         <select value={territoryId} onChange={(e) => setTerritoryId(e.target.value)} className="flex-1 bg-zinc-800 rounded px-2 py-1 text-sm border border-zinc-700">
           {myTerritories.map((t) => <option key={t.id} value={t.id}>{t.name} (M{t.muscle})</option>)}
         </select>
-        <input type="text" inputMode="numeric" pattern="[0-9]*" min={1} max={10} value={count} onChange={(e) => { const v = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10); setCount(Math.max(1, Math.min(isNaN(v) ? 1 : v, 10))); }} className="w-16 bg-zinc-800 rounded px-2 py-1 text-sm border border-zinc-700 text-center" />
+        <input type="text" inputMode="numeric" pattern="[0-9]*" value={countStr} onChange={(e) => setCountStr(e.target.value.replace(/[^0-9]/g, ''))} onBlur={() => setCountStr(String(count))} className="w-16 bg-zinc-800 rounded px-2 py-1 text-sm border border-zinc-700 text-center" />
       </div>
       <button
         onClick={async () => { await performAction('hire', { count, territoryId }); setSelectedAction(null); }}
@@ -218,8 +219,10 @@ function MoveForm({ myTerritories }: { myTerritories: any[] }) {
   const initialFrom = myTerritories.find(t => t.id === selectedTerritoryId)?.id || myTerritories[0]?.id || '';
   const [fromId, setFromId] = useState(initialFrom);
   const [toId, setToId] = useState(myTerritories.find(t => t.id !== initialFrom)?.id || myTerritories[0]?.id || '');
-  const [amount, setAmount] = useState(1);
+  const [amountStr, setAmountStr] = useState('1');
   const fromTerritory = myTerritories.find(t => t.id === fromId);
+  const maxAmount = fromTerritory?.muscle || 1;
+  const amount = Math.max(1, Math.min(parseInt(amountStr, 10) || 1, maxAmount));
 
   if (myTerritories.length < 2) return <div className="text-sm text-zinc-500 p-3">Need at least 2 territories to move muscle.</div>;
 
@@ -241,7 +244,7 @@ function MoveForm({ myTerritories }: { myTerritories: any[] }) {
         </div>
         <div className="w-20">
           <label className="text-xs text-zinc-500">Amount:</label>
-          <input type="text" inputMode="numeric" pattern="[0-9]*" value={amount} onChange={(e) => { const v = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10); setAmount(Math.max(1, Math.min(isNaN(v) ? 1 : v, fromTerritory?.muscle || 1))); }} className="w-full bg-zinc-800 rounded px-2 py-1 text-sm border border-zinc-700 text-center" />
+          <input type="text" inputMode="numeric" pattern="[0-9]*" value={amountStr} onChange={(e) => setAmountStr(e.target.value.replace(/[^0-9]/g, ''))} onBlur={() => setAmountStr(String(amount))} className="w-full bg-zinc-800 rounded px-2 py-1 text-sm border border-zinc-700 text-center" />
         </div>
       </div>
       <button
