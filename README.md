@@ -1,190 +1,128 @@
 # Gangs of Claude
 
-A text-based mafia strategy game built entirely within Claude Code using agents, skills, and hooks, with a companion-style web interface.
+A turn-based mafia strategy game where **4 LLM-powered AI families** compete for territory control, built with Claude Code and a React web UI.
 
 ## Overview
 
-Gangs of Claude creates a **true multiplayer experience** where **22 AI-controlled characters** across 4 rival families each have unique personalities, motivations, and decision-making patterns. You start as an unaffiliated street hustler, must get recruited into a family, and climb the ranks while navigating an unstable peace between families.
+Gangs of Claude pits you against **4 rival AI families**, each with unique personalities and strategies driven by LLM decisions. Pick a family and compete against the other 3 — hiring muscle, attacking territories, upgrading operations, and using diplomacy to forge or break alliances. Each turn, you get 1 action + 1 free diplomacy message, then each AI family gets the same.
 
 ## Quick Start
 
-### Option 1: Web UI (Recommended)
-
-1. **Start the web interface:**
-   ```bash
-   cd web
-   bun install
-   bun run dev
-   ```
-
-2. **Open browser:** `http://localhost:5174`
-
-3. **Start a new game** via the command palette (`Ctrl+K`) or type `/start-game`
+```bash
+cd web
+bun install
+bun run dev
+# Open http://localhost:5174
+```
 
 The web UI provides:
 - Real-time turn processing with visual feedback
-- Family panels showing all 22 AI characters
-- Territory map and event log
-- Live streaming of Claude responses
+- Family panels showing territory, wealth, and muscle
+- Interactive territory grid and event log
+- Live WebSocket streaming of AI decisions
 
-### Option 2: CLI Only
+## Player Actions
 
-1. **Start a new game:**
-   ```
-   /start-game
-   ```
+Each turn you get **1 action** plus **1 free diplomacy message**:
 
-2. **Get recruited:**
-   ```
-   /seek-patronage enzo_marinelli
-   ```
-   (Target Associates, Soldiers, or Capos - Dons won't meet with outsiders)
+| Action | Description |
+|--------|-------------|
+| **Hire** | Buy muscle ($50 each), station at your territory |
+| **Attack** | Send muscle from your territories to attack enemy or unclaimed territory |
+| **Upgrade** | Level up a territory ($200) to increase income |
+| **Move** | Transfer muscle between your territories |
+| **Message** | Send diplomacy (free — doesn't count as your action) |
 
-3. **Check your status:**
-   ```
-   /status
-   ```
+### Diplomacy Options
 
-4. **Advance time:**
-   ```
-   /next-turn
-   ```
-   (All 22 AI characters act in rank order)
-
-## Game Commands
-
-### Core Commands
-
-| Command | Description |
-|---------|-------------|
-| `/start-game` | Initialize a new game |
-| `/status` | View your current state |
-| `/next-turn` | Advance turn (all AI characters act) |
-| `/promote` | Check for rank promotion |
-
-### Player Actions
-
-| Command | Description |
-|---------|-------------|
-| `/seek-patronage [character]` | Try to get recruited (Outsiders only) |
-| `/attack [target] [type]` | Launch violent action |
-| `/recruit [target]` | Build your network/mentor others |
-| `/message [recipient] [content]` | Send message to any character |
-| `/expand [amount]` | Grow family territory |
-| `/intel [target] [type]` | Espionage operations |
-
-### Attack Types
-
-- `assassinate` - Attempt to kill target (high risk)
-- `beatdown` - Send message by injuring target
-- `business` - Destroy their income sources
-- `territory` - Challenge for control
-
-### Intel Operations
-
-- `spy` - Plant mole in enemy family
-- `steal` - Steal resources
-- `blackmail` - Get compromising information
-- `survey` - Assess enemy strength
-
-## Rank Progression
-
-```
-Outsider (unaffiliated)
-   ↓
-Associate (recruited)
-   ↓ Requirements: 10 respect, 1 mission, 100 wealth
-Soldier (made man)
-   ↓ Requirements: 30 respect, 5 successful actions
-Capo (captain)
-   ↓ Requirements: 60 respect, control territory
-Underboss (second-in-command)
-   ↓ Requirements: 90 respect, Don dies, survive challenges
-Don (family head)
-```
+- **Partnership** — Propose alliance with another family
+- **Coordinate Attack** — Plan joint offensive against a rival
+- **Declare War** — Openly declare hostility
+- **Share Intel** — Exchange information about rivals
 
 ## The Four Families
 
-### Marinelli Family - Aggressive Traditionalists
-- **Don:** Vito Marinelli - Patriarch, old-school values
-- **Style:** Direct confrontation, honor, family first
-- **Territory:** Little Italy, North End
+Each family is an **LLM-powered agent** with distinct personality and strategy:
 
-### Rossetti Family - Business Diplomats
-- **Don:** Marco Rossetti - Wealthy, diplomatic
-- **Style:** Economic warfare, bribery, profit-focused
-- **Territory:** Fishmarket, Warehouse District
+### 🔴 Marinelli Family — Aggressive Traditionalists
+- **Strategy:** Attack-first, respect through power
+- **Style:** Direct confrontation, violent enforcement, territorial expansion by force
 
-### Falcone Family - Cunning Manipulators
-- **Don:** Sofia Falcone - Widow, strategic
-- **Style:** Espionage, blackmail, playing both sides
-- **Territory:** Southside Clubs, Downtown
+### 🟡 Rossetti Family — Business Diplomats
+- **Strategy:** Wealth accumulation, strategic partnerships
+- **Style:** Economic warfare, diplomacy, avoid conflict unless profitable
 
-### Moretti Family - Honorable Traditionalists
-- **Don:** Antonio Moretti - Traditional, respects omertà
-- **Style:** Balanced approach, values respect
-- **Territory:** East Side, Harbor
+### 🟣 Falcone Family — Cunning Manipulators
+- **Strategy:** Exploitation, information warfare
+- **Style:** Patience, blackmail, playing both sides, long-game manipulation
+
+### 🟢 Moretti Family — Honorable Traditionalists
+- **Strategy:** Defensive buildup, measured expansion
+- **Style:** Traditional values, avoids unnecessary conflict, builds from strength
 
 ## Tips for New Players
 
-1. **Start Small:** Don't attack immediately. Build relationships first.
-2. **Choose Your Family Carefully:** Each has different strengths and playstyles.
-3. **Respect Rank:** Don't message Dons as an outsider. Work your way up.
-4. **Use Messages:** Diplomacy is often cheaper than war.
-5. **Watch Your Back:** Allies can become enemies. Trust no one completely.
-6. **Think Ahead:** Every action has consequences. Plan accordingly.
+1. **Hire Early:** Muscle is cheap — territories without defenders are easy targets.
+2. **Choose Your Battles:** Attacking costs muscle on both sides. Pick weak targets.
+3. **Upgrade Strategically:** Higher-level territories generate more income per turn.
+4. **Use Diplomacy:** Messages are free. Alliances can turn the tide.
+5. **Watch the AI:** Each family has tendencies — learn their patterns.
+6. **Control the Map:** Territory = income = power. Expand or be consumed.
 
 ## Winning the Game
 
-**Win Condition:** Become Don and eliminate all rival families (0 soldiers, 0 territory)
+**Win Condition:** Eliminate all rival families (no territories remaining).
 
-**Lose Conditions:**
-- Your family is eliminated
-- You are assassinated
-- Your loyalty reaches 0 (kicked out of family)
+**Lose Condition:** Your family is eliminated (all territories lost).
 
 ## Game Features
 
-- **22 AI Characters** - Each with unique personality and decision-making
-- **Dynamic Emergent Storytelling** - Characters act independently each turn
-- **Rank-Appropriate Interactions** - Status affects how characters respond
-- **Message System** - Send communications to any character
-- **ASCII Art** - Visual feedback at key moments
+- **4 LLM-Powered AI Families** — Each with unique personality and strategic decision-making
+- **Dynamic Emergent Storytelling** — AI families act independently with reasoning and taunts
+- **Diplomacy System** — Free messages each turn for alliances, threats, or intel sharing
+- **Territory Control** — Grid-based map with upgradeable territories
+- **Balanced Turns** — Player and AI each get 1 action + 1 diplomacy per turn
 
 ## Technical Details
 
-### Web UI Architecture
-
-The web UI provides a real-time companion interface:
+### Architecture
 
 ```
-Browser UI ←→ WebSocket (JSON) ←→ Bun/Hono Server ←→ WebSocket (NDJSON) ←→ Claude Code CLI
+Browser (React + Zustand) ←→ WebSocket ←→ Bun/Hono Server (port 3456) ←→ Claude CLI (--sdk-url)
+                                                    ↕
+                                          .claude/game-state/save.json
 ```
 
-Key features:
-- **Turn Processing Modal** - Visual feedback showing each AI character's action as it executes
-- **Real-time Event Polling** - Server polls `save.json` every 500ms for updates
-- **State Persistence** - Zustand store with localStorage backup
-- **Command Palette** - Quick access via `Ctrl+K`
+- **Server:** Bun + Hono (port 3456) — HTTP API + WebSocket handlers
+- **Client:** React + Zustand + Vite (port 5174)
+- **AI:** Claude CLI spawned via `--sdk-url` WebSocket protocol; falls back to mechanical AI if unavailable
 
-### Turn Processing System
+### Turn Processing
 
-The game uses a **PreToolUse hook** to ensure turn consistency:
+1. Player clicks "Next Turn"
+2. Server collects economy (income/upkeep) for all families
+3. Server spawns Claude CLI process with `--sdk-url`
+4. For each AI family: sends prompt with personality + game state + available actions
+5. LLM responds with JSON: `{action, target, reasoning, diplomacy, taunt}`
+6. Server executes the action mechanics
+7. Events broadcast to browser via WebSocket in real-time
+8. Win condition checked after all families act
 
-1. User invokes `/next-turn`
-2. **Hook automatically increments turn** before skill executes
-3. All 22 AI characters process in rank order (Associates → Soldiers → Capos → Consiglieres → Underbosses → Dons)
-4. Each character's action is logged immediately to `save.json` events array
-5. Web UI polls `save.json` and displays actions in real-time
+### Key Server Files
 
-This prevents the turn counter from getting out of sync with logged events.
+| File | Purpose |
+|------|---------|
+| `web/server/index.ts` | Main server, HTTP API, WebSocket handlers |
+| `web/server/mechanics.ts` | Game mechanics (combat, economy, territory) |
+| `web/server/claude-bridge.ts` | Spawns Claude CLI via `--sdk-url` for LLM AI |
+| `web/server/ai-prompts.ts` | Builds rich prompts per AI family |
+| `web/server/dev.ts` | Dev server entry |
 
-### Claude Code Extension Features
+### Claude Code Features
 
-- **Skills** (`/start-game`, `/next-turn`, `/status`, etc.) for game commands
-- **Sub-agents** for 22 unique AI characters with distinct personalities
-- **Hooks** for auto-save and turn management
-- **Memory** for persistent game state
+- **Skills** (`/start-game`, `/next-turn`, `/status`) for game commands
+- **Agents** (4 family personality definitions) for LLM-driven AI decisions
+- **Game state** persisted in `.claude/game-state/save.json`
 
 ## License
 

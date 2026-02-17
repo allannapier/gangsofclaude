@@ -37,6 +37,7 @@ export interface SaveState {
   phase: 'setup' | 'playing' | 'ended';
   playerFamily: string | null;
   playerActed: boolean;
+  playerMessaged: boolean;
   winner: string | null;
   families: Record<string, FamilyState>;
   territories: Territory[];

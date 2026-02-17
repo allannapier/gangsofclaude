@@ -14,7 +14,7 @@
 
 ## What Is This Project?
 
-Gangs of Claude is an immersive text-based mafia game where **4 LLM-powered family agents** control **4 rival families** that act autonomously each turn. The player starts as an unaffiliated outsider, gets recruited into a family, and climbs the ranks — all while rival families scheme, fight, and negotiate around them.
+Gangs of Claude is a turn-based mafia strategy game where **4 LLM-powered AI families** compete for territory control. The player picks a family and competes against the other 3 AI families — hiring muscle, attacking territories, upgrading operations, and using diplomacy. Each turn, the player gets 1 action + 1 free diplomacy message, then each AI family gets the same.
 
 The game is built on **Claude Code extension features** — skills for player commands, LLM-driven family agents for NPC decisions, and hooks for game-state management — with a companion **React web UI** connected via WebSocket bridge. During each turn, the server spawns a Claude CLI process per family using the `--sdk-url` WebSocket protocol, feeding each a rich prompt with full game state and personality context.
 
@@ -42,37 +42,11 @@ la_cosa_nostra/
 │   ├── skills/                        # Player slash commands
 │   │   ├── start-game/SKILL.md        # Initialize a new game
 │   │   ├── status/SKILL.md            # Display player stats & game state
-│   │   ├── next-turn/SKILL.md         # Advance turn — all 4 family AIs act
-│   │   ├── seek-patronage/SKILL.md    # Get recruited by a family
-│   │   ├── attack/SKILL.md            # Violent actions (assassinate, beatdown, etc.)
-│   │   ├── recruit/SKILL.md           # Build network / mentor others
-│   │   ├── expand/SKILL.md            # Grow family territory
-│   │   ├── claim/SKILL.md             # Claim unowned territory
-│   │   ├── intel/SKILL.md             # Espionage (spy, steal, blackmail, survey)
-│   │   ├── message/SKILL.md           # Send messages to characters
-│   │   └── promote/SKILL.md           # Attempt rank advancement
+│   │   └── next-turn/SKILL.md         # Advance turn — all 4 family AIs act
 │   │
-│   ├── hooks/
-│   │   └── increment-turn.sh          # PreToolUse hook — increments turn before /next-turn
-│   │
-│   ├── game-state/
-│   │   ├── save.json                  # Canonical game state (single source of truth)
-│   │   ├── save.backup.json           # Auto-backup (PostToolUse hook)
-│   │   └── log-action.ts              # Action logging utility
-│   │
-│   ├── game-engine/
-│   │   ├── engine.sh                  # Core turn processing engine
-│   │   ├── lib/
-│   │   │   ├── json.sh                # JSON manipulation helpers
-│   │   │   ├── logging.sh             # Game event logging
-│   │   │   └── random.sh              # RNG utilities
-│   │   ├── mechanics/
-│   │   │   ├── attack.sh              # Combat resolution
-│   │   │   └── recruit.sh             # Recruitment mechanics
-│   │   └── narrative/
-│   │       └── templates/             # Story text templates
-│   │
-│   └── scripts/                       # Utility scripts
+│   └── game-state/
+│       ├── save.json                  # Canonical game state (single source of truth)
+│       └── save.backup.json           # Auto-backup
 │
 ├── web/                               # Web UI (companion interface)
 │   ├── package.json                   # Bun workspace root
@@ -103,44 +77,40 @@ la_cosa_nostra/
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                    PLAYER INTERFACE                       │
-│  ┌─────────────┐          ┌────────────────────────────┐ │
-│  │  Claude CLI  │          │     React Web UI           │ │
-│  │  /commands   │          │  localhost:5174            │ │
-│  └──────┬──────┘          └─────────────┬──────────────┘ │
-│         │                               │                │
-│         │                     WebSocket (JSON)           │
-│         │                               │                │
-│         │                  ┌────────────┴─────────────┐  │
-│         │                  │  Bun/Hono Bridge Server   │  │
-│         │                  │  WebSocket (NDJSON) ←→ CLI│  │
-│         │                  └────────────┬─────────────┘  │
-│         │                               │                │
-└─────────┼───────────────────────────────┼────────────────┘
-          │                               │
-          ▼                               ▼
+│                                                          │
+│            ┌────────────────────────────┐                │
+│            │     React Web UI           │                │
+│            │  localhost:5174            │                │
+│            └─────────────┬──────────────┘                │
+│                          │                               │
+│                WebSocket (JSON)                          │
+│                          │                               │
+│             ┌────────────┴─────────────┐                 │
+│             │  Bun/Hono Server :3456   │                 │
+│             │  HTTP API + WebSocket    │                 │
+│             └────────────┬─────────────┘                 │
+│                          │                               │
+└──────────────────────────┼───────────────────────────────┘
+                           │
+                           ▼
 ┌──────────────────────────────────────────────────────────┐
 │                   GAME ENGINE LAYER                       │
 │                                                          │
-│  ┌──────────┐  ┌──────────────┐  ┌────────────────────┐ │
-│  │  Skills   │  │   Hooks      │  │  Claude CLI Bridge │ │
-│  │ /attack   │  │ PreToolUse   │  │  (--sdk-url WS)    │ │
-│  │ /recruit  │  │ PostToolUse  │  │                    │ │
-│  │ /next-turn│  │ SessionStart │  │  ┌──────────────┐  │ │
-│  │ ...       │  │              │  │  │ Family Agents │  │ │
-│  └─────┬────┘  └──────┬───────┘  │  │ (4 LLM calls)│  │ │
-│        │               │          │  └──────┬───────┘  │ │
-│        │               │          └─────────┤          │ │
-│        │               │                    │          │ │
-│        ▼               ▼                    ▼          │ │
-│  ┌──────────────────────────────────────────────────┐  │ │
-│  │          .claude/game-state/save.json             │  │ │
-│  │          (Single Source of Truth)                  │  │ │
-│  └──────────────────────────────────────────────────┘  │ │
-│                                                          │
 │  ┌──────────────────────────────────────────────────┐    │
-│  │  ai-prompts.ts → builds rich prompt per family    │    │
-│  │  claude-bridge.ts → spawns Claude CLI process     │    │
-│  │  mechanics.ts → executes returned JSON actions    │    │
+│  │  mechanics.ts  — combat, economy, territory       │    │
+│  │  claude-bridge.ts — spawns Claude CLI (--sdk-url) │    │
+│  │  ai-prompts.ts — builds prompt per AI family      │    │
+│  └──────────────────────────┬───────────────────────┘    │
+│                             │                            │
+│                  ┌──────────┴──────────┐                 │
+│                  │  Claude CLI Bridge  │                 │
+│                  │  (4 LLM calls/turn) │                 │
+│                  └──────────┬──────────┘                 │
+│                             │                            │
+│                             ▼                            │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │          .claude/game-state/save.json             │    │
+│  │          (Single Source of Truth)                  │    │
 │  └──────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -149,7 +119,7 @@ la_cosa_nostra/
 
 ## Agent System — LLM-Driven Family AI
 
-Each of the 4 rival families is controlled by a **single LLM-powered agent** defined in `.claude/agents/<family>-family.md`. Rather than 22 individual character subagents, the game uses 4 family-level agents that encapsulate the entire personality, strategy, and decision-making style of each family.
+Each of the 4 rival families is controlled by a **single LLM-powered agent** defined in `.claude/agents/<family>-family.md`. Each family-level agent encapsulates the personality, strategy, and decision-making style of that family.
 
 ### How It Works
 
@@ -209,7 +179,7 @@ Agents are invoked in two ways:
 
 1. **During `/next-turn`** — The server processes families sequentially. For each family, `claude-bridge.ts` spawns a Claude CLI process, sends the prompt built by `ai-prompts.ts`, receives a JSON action, and `mechanics.ts` applies it to `save.json`.
 
-2. **Proactively by Claude** — When the player interacts with a family (e.g., `/seek-patronage`), Claude uses the family's agent definition to roleplay the NPC response in character.
+2. **Proactively by Claude** — When the player interacts with a family (e.g., via diplomacy messages), Claude uses the family's agent definition to roleplay the NPC response in character.
 
 ---
 
@@ -217,19 +187,13 @@ Agents are invoked in two ways:
 
 Skills are defined in `.claude/skills/<name>/SKILL.md` and exposed as `/slash-commands`.
 
-| Skill | Description | Category |
-|-------|-------------|----------|
-| `/start-game` | Initialize a new game with ASCII title screen | Core |
-| `/status` | Display player stats, family standings, messages | Core |
-| `/next-turn` | Advance turn — all 4 family AIs act sequentially | Core |
-| `/promote` | Check qualifications and attempt rank advancement | Core |
-| `/seek-patronage [character]` | Get recruited by a family (Outsider only) | Social |
-| `/message [recipient] [content]` | Send messages to any character | Social |
-| `/attack [target] [type]` | Violent actions: assassinate, beatdown, business, territory | Combat |
-| `/recruit [target]` | Build network, mentor others | Growth |
-| `/expand [amount]` | Grow family territory and business operations | Growth |
-| `/claim` | Claim unowned territory for your family | Growth |
-| `/intel [target] [type]` | Espionage: spy, steal, blackmail, survey | Intelligence |
+| Skill | Description |
+|-------|-------------|
+| `/start-game` | Initialize a new game |
+| `/status` | Display player stats, family standings, messages |
+| `/next-turn` | Advance turn — all 4 family AIs act sequentially |
+
+Player actions (hire, attack, upgrade, move, message) are handled through the web UI action panel, not CLI skills.
 
 ---
 
@@ -239,20 +203,8 @@ Hooks are configured in `.claude/settings.json` and fire at specific lifecycle p
 
 | Hook | Event | Purpose |
 |------|-------|---------|
-| Turn Increment | `PreToolUse` (Skill: next-turn) | Auto-increments turn counter in `save.json` before any family AIs act. Prevents turn desync. |
 | Auto-Backup | `PostToolUse` (Edit/Write) | Copies `save.json` → `save.backup.json` after any state mutation. |
 | Session Resume | `SessionStart` (startup/resume) | Checks for saved game and informs player of status or prompts `/start-game`. |
-
-### Turn Increment Hook (Critical)
-
-The `increment-turn.sh` hook runs **before** the `/next-turn` skill executes. This ensures the turn number in `save.json` is always correct when events are logged:
-
-```
-Player: /next-turn
-  → PreToolUse hook fires → increment-turn.sh bumps turn counter
-  → next-turn skill runs → 4 family AIs act using the correct turn number
-  → PostToolUse hook fires → save.json backed up
-```
 
 ---
 
@@ -264,45 +216,21 @@ All game state lives in a single JSON file at `.claude/game-state/save.json`. Th
 {
   "turn": 4,
   "phase": "playing",
-  "player": {
-    "name": "Player",
-    "rank": "Outsider",
-    "family": null,
-    "respect": 0,
-    "wealth": 100,
-    "heat": 0,
-    "loyalty": 50
-  },
+  "player": { "family": "Marinelli" },
   "families": {
-    "Marinelli": { "territory": [...], "wealth": 500, "members": [...] },
-    "Rossetti": { "territory": [...], "wealth": 600, "members": [...] },
-    "Falcone": { "territory": [...], "wealth": 450, "members": [...] },
-    "Moretti": { "territory": [...], "wealth": 400, "members": [...] }
+    "Marinelli": { "territory": [...], "wealth": 500, "muscle": 10 },
+    "Rossetti": { "territory": [...], "wealth": 600, "muscle": 8 },
+    "Falcone": { "territory": [...], "wealth": 450, "muscle": 7 },
+    "Moretti": { "territory": [...], "wealth": 400, "muscle": 9 }
   },
   "events": [
-    { "turn": 3, "actor": "Marco Marinelli", "action": "expand", "result": "..." }
+    { "turn": 3, "actor": "Marinelli", "action": "attack", "result": "..." }
   ],
   "messages": [
-    { "from": "Enzo Marinelli", "to": "Player", "content": "...", "turn": 2 }
+    { "from": "Marinelli", "to": "Rossetti", "content": "...", "turn": 2 }
   ]
 }
 ```
-
----
-
-## Game Engine
-
-The deterministic game engine lives in `.claude/game-engine/` and provides shell-based mechanics:
-
-| Component | Path | Purpose |
-|-----------|------|---------|
-| Core engine | `engine.sh` | Orchestrates turn processing |
-| JSON helpers | `lib/json.sh` | Read/write JSON game state |
-| Logging | `lib/logging.sh` | Structured event logging |
-| RNG | `lib/random.sh` | Deterministic random number generation |
-| Combat | `mechanics/attack.sh` | Attack resolution and damage |
-| Recruitment | `mechanics/recruit.sh` | Recruitment success/failure logic |
-| Story templates | `narrative/templates/` | Flavor text and narrative output |
 
 ---
 
@@ -311,36 +239,34 @@ The deterministic game engine lives in `.claude/game-engine/` and provides shell
 The web interface at `web/` is a **companion app** that provides visual feedback alongside the Claude Code CLI.
 
 ### Tech Stack
-- **Server:** Bun + Hono (WebSocket bridge)
-- **Client:** React + Zustand + TypeScript
-- **Communication:** WebSocket (JSON ↔ NDJSON bridge)
+- **Server:** Bun + Hono (port 3456)
+- **Client:** React + Zustand + Vite (port 5174)
+- **Communication:** WebSocket for real-time events
 
 ### Data Flow
 
 ```
-Browser (React)
+Browser (React + Zustand)
     ↕ WebSocket (JSON)
-Bun/Hono Server
-    ↕ WebSocket (NDJSON)
-Claude Code CLI
-    ↕ File I/O
-save.json
-    ↑ Polling (500ms)
-Bun/Hono Server → broadcasts changes to browser
+Bun/Hono Server (port 3456)
+    ↕ Claude CLI (--sdk-url WebSocket)
+LLM AI decisions
+    ↕ mechanics.ts
+.claude/game-state/save.json
 ```
 
 ### Key Components
 
 | File | Purpose |
 |------|---------|
-| `web/server/index.ts` | WebSocket bridge between browser and Claude CLI |
-| `web/server/protocol.ts` | NDJSON protocol serialization |
-| `web/server/mechanics.ts` | Server-side game mechanics |
-| `web/server/claude-bridge.ts` | Claude CLI WebSocket bridge for LLM-driven AI |
-| `web/server/ai-prompts.ts` | Prompt builder for family agents |
+| `web/server/index.ts` | Main server, HTTP API, WebSocket handlers |
+| `web/server/mechanics.ts` | Game mechanics (combat, economy, territory) |
+| `web/server/claude-bridge.ts` | Spawns Claude CLI via `--sdk-url` for LLM AI |
+| `web/server/ai-prompts.ts` | Builds rich prompts per AI family |
+| `web/server/dev.ts` | Dev server entry |
 | `web/client/src/App.tsx` | Root application component |
 | `web/client/src/store/` | Zustand game state management |
-| `web/client/src/components/TurnProcessingModal.tsx` | Real-time turn visualization |
+| `web/client/src/components/` | ActionPanel, FamilyOverview, TerritoryGrid, TurnModal, EventLog |
 
 ### Running the Web UI
 
@@ -357,38 +283,20 @@ bun run dev
 
 Each turn follows this sequence:
 
-1. **Player invokes `/next-turn`** (via CLI or Web UI)
-2. **PreToolUse hook** fires `increment-turn.sh` → bumps turn counter in `save.json`
-3. **Turn skill** reads `save.json`, invokes the turn engine
-4. **4 family agents process sequentially:**
-   - For each family, `claude-bridge.ts` spawns a Claude CLI process via `--sdk-url` WebSocket
-   - `ai-prompts.ts` builds a rich prompt with game state, family personality, and available actions
-   - The LLM returns a structured JSON action (action, target, reasoning, diplomacy, taunt)
-   - `mechanics.ts` validates and executes the action, updating `save.json`
-   - If Claude CLI is unavailable, falls back to mechanical AI (weighted random based on family personality)
-5. **Web UI** polls `save.json` every 500ms → displays actions in real-time modal
-6. **PostToolUse hook** backs up `save.json`
+1. **Player clicks "Next Turn"** in the web UI
+2. **Server collects economy** (income/upkeep) for all families
+3. **Player gets 1 action** (hire/attack/upgrade/move) + **1 free message** (diplomacy)
+4. **For each AI family**, the server:
+   - Spawns a Claude CLI process via `--sdk-url` WebSocket (`claude-bridge.ts`)
+   - Builds a rich prompt with game state + family personality (`ai-prompts.ts`)
+   - Receives a JSON response: `{action, target, reasoning, diplomacy, taunt}`
+   - Executes the action mechanics (`mechanics.ts`), updating `save.json`
+   - Falls back to mechanical AI if Claude CLI is unavailable
+5. **Events broadcast** to browser via WebSocket in real-time
+6. **Win condition checked** after all families act
 
----
-
-## Rank Progression
-
-```
-Outsider (unaffiliated)
-   ↓  /seek-patronage
-Associate (recruited into a family)
-   ↓  10 respect, 1 mission, 100 wealth
-Soldier (made man)
-   ↓  30 respect, 5 successful actions
-Capo (captain — runs a crew)
-   ↓  60 respect, control territory
-Underboss (second-in-command)
-   ↓  90 respect, Don dies/removed, survive challenges
-Don (family head)
-```
-
-**Win condition:** Become Don and eliminate all rival families.  
-**Lose conditions:** Family eliminated, assassinated, or loyalty drops to 0.
+**Win condition:** Eliminate all rival families (no territories remaining).  
+**Lose condition:** Your family is eliminated (all territories lost).
 
 ---
 

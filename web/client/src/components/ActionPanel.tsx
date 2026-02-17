@@ -43,14 +43,24 @@ export function ActionPanel() {
         </div>
       )}
 
-      {/* Action Buttons */}
-      {state.playerActed && (
+      {/* Action Buttons — message (diplomacy) is free, like AI diplomacy */}
+      {state.playerActed && state.playerMessaged && (
         <div className="text-sm text-amber-400 bg-amber-900/20 border border-amber-800/50 rounded px-3 py-1.5">
-          ✅ Action used this turn. Click <strong>Next Turn</strong> to continue.
+          ✅ Action &amp; message used this turn. Click <strong>Next Turn</strong> to continue.
+        </div>
+      )}
+      {state.playerActed && !state.playerMessaged && (
+        <div className="text-sm text-amber-400 bg-amber-900/20 border border-amber-800/50 rounded px-3 py-1.5">
+          ✅ Action used. You can still send a <strong>Message</strong> this turn.
+        </div>
+      )}
+      {!state.playerActed && state.playerMessaged && (
+        <div className="text-sm text-amber-400 bg-amber-900/20 border border-amber-800/50 rounded px-3 py-1.5">
+          ✅ Message sent. You can still use an <strong>action</strong> this turn.
         </div>
       )}
       <div className="flex flex-wrap gap-2">
-        {['hire', 'attack', 'upgrade', 'move', 'message'].map((a) => (
+        {['hire', 'attack', 'upgrade', 'move'].map((a) => (
           <button
             key={a}
             onClick={() => setSelectedAction(selectedAction === a ? null : a)}
@@ -69,11 +79,24 @@ export function ActionPanel() {
                 attack: <span className="inline-flex items-center gap-1"><ActionIcon size={14} /> Attack</span>,
                 upgrade: <span className="inline-flex items-center gap-1"><UpgradeIcon size={14} /> Upgrade</span>,
                 move: <span className="inline-flex items-center gap-1"><MoveIcon size={14} /> Move</span>,
-                message: <span className="inline-flex items-center gap-1"><MessageIcon size={14} /> Message</span>,
               }[a]
             }
           </button>
         ))}
+        {/* Message button — separate from actions, only disabled when already sent */}
+        <button
+          onClick={() => setSelectedAction(selectedAction === 'message' ? null : 'message')}
+          disabled={state.playerMessaged}
+          className={`px-3 py-1 rounded text-sm border transition-colors ${
+            state.playerMessaged
+              ? 'bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed'
+              : selectedAction === 'message'
+              ? 'bg-zinc-700 border-zinc-500 text-white'
+              : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500'
+          }`}
+        >
+          <span className="inline-flex items-center gap-1"><MessageIcon size={14} /> Message</span>
+        </button>
       </div>
 
       {/* Action Forms */}

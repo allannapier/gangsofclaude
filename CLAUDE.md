@@ -289,17 +289,18 @@ hooks:
 
 ## Development Workflow
 
-1. **Skills** - Create game commands like `/heist`, `/recruit`, `/manage`
-2. **Subagents** - Create specialized NPCs (Don, Consigliere, Caporegime)
-3. **Hooks** - Automate game state persistence, notifications, validation
+1. **Skills** - Game commands (`/start-game`, `/status`, `/next-turn`)
+2. **Agents** - 4 LLM-powered family agents for AI decisions
+3. **Web UI** - React frontend with Bun/Hono server
 
 ## Game Architecture
 
-The game uses:
-- **Skills** for player actions (commands)
-- **Subagents** for NPC interactions and game systems
-- **Hooks** for game state persistence and event handling
-- **Memory** for persistent game state and player progress
+The game uses **4 LLM-powered family agents** competing for territory control:
+- **Server-side mechanics** (`web/server/mechanics.ts`) for combat, economy, territory
+- **Claude CLI bridge** (`web/server/claude-bridge.ts`) spawns LLM via `--sdk-url` WebSocket
+- **AI prompts** (`web/server/ai-prompts.ts`) build rich prompts per family with game state + personality
+- **Fallback AI** — mechanical/random decisions if Claude CLI is unavailable
+- **Game state** persisted in `.claude/game-state/save.json`
 
 ## Game-Specific Implementation
 
@@ -311,8 +312,8 @@ All game state is stored in `.claude/game-state/save.json`:
 {
   "turn": 4,
   "phase": "playing",
-  "player": { "name": "Player", "rank": "Outsider", ... },
-  "families": { "Marinelli": {...}, "Rossetti": {...}, ... },
+  "player": { "family": "Marinelli", ... },
+  "families": { "Marinelli": { "territory": [...], "wealth": 500 }, ... },
   "events": [ ... ],
   "messages": [ ... ]
 }
@@ -320,59 +321,48 @@ All game state is stored in `.claude/game-state/save.json`:
 
 ### Turn Processing System
 
-**Critical:** The game uses a PreToolUse hook to ensure turn consistency:
+Each turn follows this sequence:
 
-- **Hook:** `.claude/hooks/increment-turn.sh`
-- **Trigger:** Runs before `/next-turn` skill executes
-- **Purpose:** Automatically increments turn counter before any AI characters act
-
-This prevents the bug where events would be logged under the wrong turn number.
+1. Player clicks "Next Turn" in the web UI
+2. Server collects economy (income/upkeep) for all families
+3. Server spawns Claude CLI process with `--sdk-url`
+4. For each AI family: sends prompt with personality + game state + available actions
+5. LLM responds with JSON: `{action, target, reasoning, diplomacy, taunt}`
+6. Server executes the action mechanics
+7. Events broadcast to browser via WebSocket in real-time
+8. Win condition checked after all families act
 
 ### Available Skills
 
 Located in `.claude/skills/`:
-- `start-game` - Initialize new game with ASCII art title
+- `start-game` - Initialize new game
 - `status` - Display player stats and game state
-- `seek-patronage` - Get recruited by a family (Outsider only)
-- `message` - Send messages to characters
-- `next-turn` - Advance turn, all 22 AI characters act
-- `promote` - Check for rank advancement
-- `attack` - Launch violent actions (assassinate, beatdown, etc.)
-- `recruit` - Build network/mentor others
-- `expand` - Grow family territory
-- `intel` - Espionage operations (spy, steal, blackmail, survey)
+- `next-turn` - Advance turn, all 4 AI families act
 
-### AI Characters
+### AI Families
 
-22 unique characters across 4 families, each defined as a subagent in `.claude/agents/`:
+4 LLM-powered family agents defined in `.claude/agents/`:
 
-**Marinelli Family (Aggressive):**
-- Vito Marinelli (Don), Salvatore Underboss, Bruno Consigliere
-- Marco Capo, Luca Soldier, Enzo Associate
-
-**Rossetti Family (Business):**
-- Marco Rossetti (Don), Carla Underboss, Antonio Consigliere
-- Franco Capo, Maria Soldier, Paolo Associate
-
-**Falcone Family (Cunning):**
-- Sofia Falcone (Don), Victor Underboss, Dante Consigliere
-- Iris Capo, Leo Soldier
-
-**Moretti Family (Honorable):**
-- Antonio Moretti (Don), Giovanni Underboss, Elena Consigliere
-- Ricardo Capo, Carlo Soldier
+- **`marinelli-family.md`** — Aggressive Traditionalists (attack-first, territorial expansion)
+- **`rossetti-family.md`** — Business Diplomats (wealth accumulation, alliances)
+- **`falcone-family.md`** — Cunning Manipulators (information warfare, long-game strategy)
+- **`moretti-family.md`** — Honorable Traditionalists (defensive buildup, measured expansion)
 
 ### Web UI Integration
 
-The web UI (in `/web`) communicates with Claude Code via WebSocket bridge:
+The web UI (in `/web`) communicates via WebSocket:
 
-1. Browser sends commands as JSON
-2. Server translates to NDJSON for Claude Code CLI
-3. CLI executes skill, writes to `save.json`
-4. Server polls `save.json` every 500ms
-5. Changes broadcast to browser in real-time
+- **Server:** Bun + Hono (port 3456) — HTTP API + WebSocket handlers
+- **Client:** React + Zustand + Vite (port 5174)
 
-**Key files:**
-- `web/server/index.ts` - WebSocket bridge server
-- `web/client/src/components/TurnProcessingModal.tsx` - Real-time turn visualization
+**Key server files:**
+- `web/server/index.ts` - Main server, HTTP API, WebSocket handlers
+- `web/server/mechanics.ts` - Game mechanics (combat, economy, territory)
+- `web/server/claude-bridge.ts` - Spawns Claude CLI via `--sdk-url` for LLM AI
+- `web/server/ai-prompts.ts` - Builds rich prompts per AI family
+- `web/server/dev.ts` - Dev server entry
+
+**Key client files:**
+- `web/client/src/App.tsx` - Root component
 - `web/client/src/store/index.ts` - Zustand state management
+- `web/client/src/components/` - ActionPanel, FamilyOverview, TerritoryGrid, TurnModal, EventLog

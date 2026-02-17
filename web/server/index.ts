@@ -536,6 +536,7 @@ function updateMuscleTotals() {
 async function processNextTurn(): Promise<{ events: GameEvent[]; winner: string | null }> {
   gameState.turn++;
   gameState.playerActed = false;
+  gameState.playerMessaged = false;
   const turnEvents: GameEvent[] = [];
 
   // Helper to broadcast and collect events
@@ -820,10 +821,21 @@ app.post('/api/next-turn', async (c) => {
 app.post('/api/action', async (c) => {
   if (gameState.phase !== 'playing') return c.json({ error: 'Game is not in progress.' }, 400);
   if (!gameState.playerFamily) return c.json({ error: 'No family selected.' }, 400);
-  if (gameState.playerActed) return c.json({ error: 'You already used your action this turn. Click Next Turn to continue.' }, 400);
 
   const body = await c.req.json();
   const { action } = body;
+
+  // Messages (diplomacy) are free — don't count as the player's action.
+  // This matches AI families which get 1 action + 1 optional diplomacy per turn.
+  const isMessage = action === 'message';
+
+  if (!isMessage && gameState.playerActed) {
+    return c.json({ error: 'You already used your action this turn. Click Next Turn to continue.' }, 400);
+  }
+  if (isMessage && gameState.playerMessaged) {
+    return c.json({ error: 'You already sent a message this turn.' }, 400);
+  }
+
   let result: ActionResult;
 
   switch (action) {
@@ -847,7 +859,11 @@ app.post('/api/action', async (c) => {
   }
 
   if (result.success) {
-    gameState.playerActed = true;
+    if (isMessage) {
+      gameState.playerMessaged = true;
+    } else {
+      gameState.playerActed = true;
+    }
     broadcast({ type: 'state_update', state: gameState });
   }
   return c.json(result);

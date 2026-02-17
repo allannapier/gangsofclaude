@@ -55,6 +55,7 @@ export interface SaveState {
   phase: 'setup' | 'playing' | 'ended';
   playerFamily: string | null;
   playerActed: boolean;
+  playerMessaged: boolean;
   winner: string | null;
   families: Record<string, FamilyState>;
   territories: Territory[];
@@ -180,6 +181,7 @@ export function createInitialState(): SaveState {
     phase: 'setup',
     playerFamily: null,
     playerActed: false,
+    playerMessaged: false,
     winner: null,
     families: {
       marinelli: { id: 'marinelli', name: 'Marinelli', wealth: 500, totalMuscle: 4, personality: 'aggressive' },

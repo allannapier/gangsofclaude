@@ -4,21 +4,18 @@ A companion-style web interface for the Gangs of Claude mafia strategy game.
 
 ## Features
 
-- **Family Panel** - View all 4 families (Marinelli, Rossetti, Falcone, Moretti) with expandable character cards
-- **Turn Processing Modal** - Real-time visualization of each AI character's action with animated progress
-- **Command Palette** - Quick access to all game commands via `Ctrl+K`
-- **Territory Map** - Visual grid showing family-controlled territories
-- **Character Details** - Click any character to view stats, personality, and available actions
+- **Family Panel** - View all 4 families (Marinelli, Rossetti, Falcone, Moretti) with territory and muscle info
+- **Turn Processing Modal** - Real-time visualization of each AI family's action with animated progress
+- **Territory Grid** - Interactive map showing family-controlled territories
+- **Action Panel** - Hire muscle, attack, upgrade, move, and send diplomacy
 - **Event Log** - Track all game events and turn history
-- **Claude Output** - Live streaming of Claude AI responses
-- **Real-time Updates** - Server polls game state every 500ms for instant feedback
+- **Real-time Updates** - WebSocket-based instant feedback on game state changes
 
 ### Recent Improvements
 
-- **Fixed turn counter sync** - PreToolUse hook ensures turn increments before processing
-- **Object serialization fix** - Proper handling of complex objects in event logging
-- **Turn number auto-adjustment** - Modal automatically adapts when events arrive for different turns
-- **Improved action display** - Each AI character's action shown with appropriate icons and descriptions
+- **LLM-powered AI** - Each family's decisions driven by Claude CLI via `--sdk-url` WebSocket
+- **Mechanical fallback** - Random AI when Claude CLI is unavailable
+- **Balanced turns** - Player and AI each get 1 action + 1 diplomacy per turn
 
 ## Prerequisites
 
@@ -47,37 +44,25 @@ Open `http://localhost:5174` in your browser to access the web UI.
 ## Architecture
 
 ```
-Browser UI ←→ WebSocket (JSON) ←→ Bun/Hono Server ←→ WebSocket (NDJSON) ←→ Claude Code CLI
+Browser (React) ←→ WebSocket (JSON) ←→ Bun/Hono Server (:3456) ←→ Claude CLI (--sdk-url)
 ```
 
 The server:
-1. Spawns `claude --sdk-url` processes for each session
-2. Bridges messages between browser and CLI
-3. Translates between JSON (browser) and NDJSON (CLI) protocols
+1. Handles HTTP API and WebSocket connections for the game
+2. Spawns Claude CLI processes via `--sdk-url` for LLM AI decisions
+3. Executes game mechanics (combat, economy, territory) server-side
 
-## Game Commands
+## Player Actions
 
-### Core Commands
-| Command | Description |
-|---------|-------------|
-| `/start-game` | Initialize a new game |
-| `/status` | View your current state |
-| `/next-turn` | Advance turn (all AI characters act) |
-| `/promote` | Check for rank promotion |
+Each turn you get **1 action** + **1 free diplomacy message**:
 
-### Action Commands
-| Command | Description |
-|---------|-------------|
-| `/seek-patronage [character]` | Try to get recruited (Outsiders only) |
-| `/attack [target] [type]` | Launch violent action |
-| `/recruit [target]` | Build your network/mentor others |
-| `/intel [target] [type]` | Espionage operations |
-| `/expand [amount]` | Grow family territory |
-
-### Social Commands
-| Command | Description |
-|---------|-------------|
-| `/message [recipient] [content]` | Send message to any character |
+| Action | Description |
+|--------|-------------|
+| **Hire** | Buy muscle ($50 each), station at territory |
+| **Attack** | Send muscle to attack enemy/unclaimed territory |
+| **Upgrade** | Level up territory ($200) to increase income |
+| **Move** | Transfer muscle between your territories |
+| **Message** | Send diplomacy to another family (free) |
 
 ## Development
 
