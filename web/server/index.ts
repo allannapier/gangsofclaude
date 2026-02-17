@@ -1,1424 +1,954 @@
 /**
- * Gangs of Claude - WebSocket Bridge Server
- *
- * Bridges between Claude Code CLI (NDJSON WebSocket) and browser (JSON WebSocket)
- * Automatically spawns Claude Code CLI when browsers connect.
+ * Gangs of Claude - Territory Control Game Server
+ * Self-contained game server with WebSocket push to browsers.
  */
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { writeFileSync, readFileSync, existsSync, watch } from 'fs';
-import { calculateTurnIncome, calculateActionReward, resolveAssassination } from './mechanics';
-
-// Character data for death resolution (mirrors client/src/data/families.ts)
-interface CharacterInfo { id: string; fullName: string; role: string; family: string; }
-const ALL_CHARACTERS: CharacterInfo[] = [
-  { id: 'marinelli_vito', fullName: 'Vito Marinelli', role: 'Don', family: 'marinelli' },
-  { id: 'marinelli_salvatore', fullName: 'Salvatore Marinelli', role: 'Underboss', family: 'marinelli' },
-  { id: 'marinelli_bruno', fullName: 'Bruno Marinelli', role: 'Consigliere', family: 'marinelli' },
-  { id: 'marinelli_marco', fullName: 'Marco Marinelli', role: 'Capo', family: 'marinelli' },
-  { id: 'marinelli_luca', fullName: 'Luca Marinelli', role: 'Soldier', family: 'marinelli' },
-  { id: 'marinelli_enzo', fullName: 'Enzo Marinelli', role: 'Associate', family: 'marinelli' },
-  { id: 'rossetti_marco', fullName: 'Marco Rossetti', role: 'Don', family: 'rossetti' },
-  { id: 'rossetti_carla', fullName: 'Carla Rossetti', role: 'Underboss', family: 'rossetti' },
-  { id: 'rossetti_antonio', fullName: 'Antonio Rossetti', role: 'Consigliere', family: 'rossetti' },
-  { id: 'rossetti_franco', fullName: 'Franco Rossetti', role: 'Capo', family: 'rossetti' },
-  { id: 'rossetti_maria', fullName: 'Maria Rossetti', role: 'Soldier', family: 'rossetti' },
-  { id: 'rossetti_paolo', fullName: 'Paolo Rossetti', role: 'Associate', family: 'rossetti' },
-  { id: 'falcone_sofia', fullName: 'Sofia Falcone', role: 'Don', family: 'falcone' },
-  { id: 'falcone_victor', fullName: 'Victor Falcone', role: 'Underboss', family: 'falcone' },
-  { id: 'falcone_dante', fullName: 'Dante Falcone', role: 'Consigliere', family: 'falcone' },
-  { id: 'falcone_iris', fullName: 'Iris Falcone', role: 'Capo', family: 'falcone' },
-  { id: 'falcone_leo', fullName: 'Leo Falcone', role: 'Soldier', family: 'falcone' },
-  { id: 'moretti_antonio', fullName: 'Antonio Moretti', role: 'Don', family: 'moretti' },
-  { id: 'moretti_giovanni', fullName: 'Giovanni Moretti', role: 'Underboss', family: 'moretti' },
-  { id: 'moretti_elena', fullName: 'Elena Moretti', role: 'Consigliere', family: 'moretti' },
-  { id: 'moretti_ricardo', fullName: 'Ricardo Moretti', role: 'Capo', family: 'moretti' },
-  { id: 'moretti_carlo', fullName: 'Carlo Moretti', role: 'Soldier', family: 'moretti' },
-];
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
+import {
+  createInitialState,
+  resolveCombat,
+  calculateFamilyIncome,
+  calculateUpkeepCost,
+  processFamilyEconomy,
+  checkWinCondition,
+  getEliminatedFamilies,
+  territoryIncome,
+  MUSCLE_HIRE_COST,
+  TERRITORY_UPGRADE_COST,
+  MAX_TERRITORY_LEVEL,
+  type SaveState,
+  type GameEvent,
+  type DiplomacyMessage,
+  type Territory,
+} from './mechanics';
+import { ClaudeAgentBridge } from './claude-bridge';
+import { buildFamilyPrompt, parseAIResponse, type AIAction } from './ai-prompts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const rootDir = join(__dirname, '..');
+const saveDir = join(rootDir, '..', '.claude', 'game-state');
+const saveJsonPath = join(saveDir, 'save.json');
 
-// Path to save.json (project root/.claude/game-state/save.json)
-const saveJsonPath = join(rootDir, '..', '.claude', 'game-state', 'save.json');
-console.log('🔧 DEBUG: Server code loaded - index.ts');
-console.log('📁 Save file path:', saveJsonPath);
+// ── State ──
 
-// Track last known state to detect changes
-let lastEventCount = 0;
-let lastMessageCount = 0;
-let lastKnownTurn = 0;
-let lastPlayerWealth = -1;
-let lastPlayerRespect = -1;
-let lastPlayerRank = '';
-let lastPlayerFamily = '';
-let lastTerritoryHash = '';
+let gameState: SaveState = loadState();
+const browserClients = new Map<string, any>(); // sessionId → ws
+const agentBridges = new Map<string, ClaudeAgentBridge>(); // sessionId → bridge
+let isProcessingTurn = false;
 
-// Poll save.json for changes (more reliable than fs.watch)
-function setupSaveFileWatcher() {
-  if (!existsSync(saveJsonPath)) {
-    console.log('⚠️ save.json not found, skipping file watcher');
-    return;
+function loadState(): SaveState {
+  try {
+    if (existsSync(saveJsonPath)) {
+      const raw = readFileSync(saveJsonPath, 'utf-8');
+      return JSON.parse(raw) as SaveState;
+    }
+  } catch (e) {
+    console.error('Failed to load save.json, creating fresh state');
   }
-
-  console.log('👁️ Setting up file polling for save.json...');
-
-  // Poll every 500ms for changes
-  setInterval(() => {
-    readAndBroadcastSaveData();
-  }, 500);
+  return createInitialState();
 }
 
-function readAndBroadcastSaveData() {
-  try {
-    const content = readFileSync(saveJsonPath, 'utf-8');
-    if (!content || content.trim() === '') {
-      console.log('⚠️ save.json is empty');
-      return;
+function saveState() {
+  if (!existsSync(saveDir)) mkdirSync(saveDir, { recursive: true });
+  writeFileSync(saveJsonPath, JSON.stringify(gameState, null, 2));
+}
+
+function broadcast(msg: any) {
+  const data = JSON.stringify(msg);
+  for (const [, ws] of browserClients) {
+    try { ws.send(data); } catch {}
+  }
+}
+
+// ── AI Decision Making ──
+
+function aiDecideAction(familyId: string, state: SaveState): GameEvent | null {
+  const family = state.families[familyId];
+  if (!family) return null;
+
+  const myTerritories = state.territories.filter(t => t.owner === familyId);
+  if (myTerritories.length === 0) return null; // eliminated
+
+  const totalMuscle = myTerritories.reduce((s, t) => s + t.muscle, 0);
+  const income = calculateFamilyIncome(state.territories, familyId);
+  const upkeep = calculateUpkeepCost(state.territories, familyId);
+
+  // Check recent diplomacy
+  const recentDiplomacy = state.diplomacy.filter(
+    d => d.to === familyId && d.turn >= state.turn - 2
+  );
+  const hasWarDeclaration = recentDiplomacy.some(d => d.type === 'war');
+  const hasPartnership = recentDiplomacy.some(d => d.type === 'partnership');
+  const coordinateAttack = recentDiplomacy.find(d => d.type === 'coordinate_attack');
+
+  // Find unclaimed territories
+  const unclaimed = state.territories.filter(t => t.owner === null);
+  // Find weak enemy territories
+  const enemyTerritories = state.territories.filter(
+    t => t.owner !== null && t.owner !== familyId
+  );
+  const weakEnemyTerritories = enemyTerritories.filter(t => t.muscle < 3);
+
+  const roll = Math.random();
+
+  // Personality-driven decisions
+  switch (family.personality) {
+    case 'aggressive': {
+      // Marinelli: prioritize attacks, especially if war declared
+      if (totalMuscle >= 4 && (hasWarDeclaration || roll < 0.5) && enemyTerritories.length > 0) {
+        const target = weakEnemyTerritories.length > 0
+          ? weakEnemyTerritories[Math.floor(Math.random() * weakEnemyTerritories.length)]
+          : enemyTerritories[Math.floor(Math.random() * enemyTerritories.length)];
+        return executeAIAttack(state, familyId, target);
+      }
+      if (unclaimed.length > 0 && totalMuscle >= 2) {
+        return executeAIClaim(state, familyId, unclaimed);
+      }
+      if (family.wealth >= MUSCLE_HIRE_COST) {
+        return executeAIHire(state, familyId);
+      }
+      break;
     }
-
-    const saveData = JSON.parse(content);
-    if (!saveData) {
-      console.log('⚠️ save.json parsed to null');
-      return;
+    case 'business': {
+      // Rossetti: prioritize upgrades and hiring
+      const upgradeable = myTerritories.filter(t => t.level < MAX_TERRITORY_LEVEL);
+      if (family.wealth >= TERRITORY_UPGRADE_COST && upgradeable.length > 0 && roll < 0.4) {
+        const target = upgradeable.sort((a, b) => a.level - b.level)[0];
+        return executeAIUpgrade(state, familyId, target);
+      }
+      if (family.wealth >= MUSCLE_HIRE_COST && roll < 0.7) {
+        return executeAIHire(state, familyId);
+      }
+      if (unclaimed.length > 0 && totalMuscle >= 2) {
+        return executeAIClaim(state, familyId, unclaimed);
+      }
+      break;
     }
-
-    const currentEventCount = saveData.events?.length || 0;
-    console.log(`📊 save.json read: ${currentEventCount} events, turn: ${saveData.turn}, lastEventCount: ${lastEventCount}`);
-
-    // Check if events changed
-    if (currentEventCount !== lastEventCount) {
-      console.log(`📊 EVENTS CHANGED: ${currentEventCount} events (was ${lastEventCount})`);
-      lastEventCount = currentEventCount;
-
-      // Broadcast events update to all browsers
-      let broadcastCount = 0;
-      for (const [id, client] of browserClients) {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify({
-            type: 'events_update',
-            events: saveData.events || [],
-          }));
-          broadcastCount++;
+    case 'cunning': {
+      // Falcone: exploit weakness, claim unclaimed, balanced
+      if (coordinateAttack && totalMuscle >= 4) {
+        const coordTargets = enemyTerritories.filter(t => t.owner === coordinateAttack.targetFamily);
+        if (coordTargets.length > 0) {
+          const target = coordTargets.sort((a, b) => a.muscle - b.muscle)[0];
+          return executeAIAttack(state, familyId, target);
         }
       }
-      console.log(`📡 Broadcasted events to ${broadcastCount} browsers`);
+      if (weakEnemyTerritories.length > 0 && totalMuscle >= 4 && roll < 0.4) {
+        const target = weakEnemyTerritories[Math.floor(Math.random() * weakEnemyTerritories.length)];
+        return executeAIAttack(state, familyId, target);
+      }
+      if (unclaimed.length > 0 && totalMuscle >= 2) {
+        return executeAIClaim(state, familyId, unclaimed);
+      }
+      if (family.wealth >= MUSCLE_HIRE_COST) {
+        return executeAIHire(state, familyId);
+      }
+      break;
+    }
+    case 'defensive': {
+      // Moretti: build strength, retaliate only
+      if (family.wealth >= MUSCLE_HIRE_COST && roll < 0.5) {
+        return executeAIHire(state, familyId);
+      }
+      const upgradeable = myTerritories.filter(t => t.level < MAX_TERRITORY_LEVEL);
+      if (family.wealth >= TERRITORY_UPGRADE_COST && upgradeable.length > 0 && roll < 0.7) {
+        const target = upgradeable[0];
+        return executeAIUpgrade(state, familyId, target);
+      }
+      if (hasWarDeclaration && totalMuscle >= 5 && enemyTerritories.length > 0) {
+        const target = weakEnemyTerritories.length > 0
+          ? weakEnemyTerritories[0]
+          : enemyTerritories[Math.floor(Math.random() * enemyTerritories.length)];
+        return executeAIAttack(state, familyId, target);
+      }
+      if (unclaimed.length > 0 && totalMuscle >= 2) {
+        return executeAIClaim(state, familyId, unclaimed);
+      }
+      break;
+    }
+  }
+
+  // Fallback: hire muscle if affordable, else do nothing
+  if (family.wealth >= MUSCLE_HIRE_COST) {
+    return executeAIHire(state, familyId);
+  }
+  return { turn: state.turn, actor: family.name, action: 'wait', details: `${family.name} bides their time.` };
+}
+
+function executeAIAttack(state: SaveState, familyId: string, target: Territory): GameEvent {
+  const family = state.families[familyId];
+  const myTerritories = state.territories.filter(t => t.owner === familyId && t.muscle > 0);
+
+  // Send muscle from territories with the most muscle (leave at least 1 per territory)
+  let muscleToSend = 0;
+  const muscleSource: { territory: Territory; amount: number }[] = [];
+  for (const t of myTerritories.sort((a, b) => b.muscle - a.muscle)) {
+    const available = t.muscle - 1;
+    if (available > 0 && muscleToSend < 5) {
+      const send = Math.min(available, 5 - muscleToSend);
+      muscleSource.push({ territory: t, amount: send });
+      muscleToSend += send;
+    }
+  }
+
+  if (muscleToSend <= 0) {
+    return { turn: state.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to attack but has no spare muscle.` };
+  }
+
+  const combat = resolveCombat(muscleToSend, target.muscle);
+
+  // Apply losses
+  let remainingAttackerLoss = combat.attackerLosses;
+  for (const src of muscleSource) {
+    const loss = Math.min(remainingAttackerLoss, src.amount);
+    src.territory.muscle -= src.amount; // remove sent muscle
+    const surviving = src.amount - loss;
+    remainingAttackerLoss -= loss;
+    // Survivors go to the target territory if won, or return home
+    if (combat.success) {
+      // survivors will be placed on conquered territory
     } else {
-      console.log(`📊 No change in event count`);
+      src.territory.muscle += surviving;
+    }
+  }
+
+  target.muscle = Math.max(0, target.muscle - combat.defenderLosses);
+
+  if (combat.success) {
+    const prevOwner = target.owner;
+    target.owner = familyId;
+    const survivingAttackers = muscleToSend - combat.attackerLosses;
+    target.muscle += survivingAttackers;
+    // Territory level goes down on conquest
+    target.level = Math.max(1, target.level - 1);
+    return {
+      turn: state.turn,
+      actor: family.name,
+      action: 'attack',
+      details: `${family.name} attacked ${target.name} (owned by ${prevOwner || 'nobody'}) with ${muscleToSend} muscle.`,
+      result: `Victory! Captured ${target.name}. Lost ${combat.attackerLosses}, defender lost ${combat.defenderLosses}.`,
+    };
+  } else {
+    return {
+      turn: state.turn,
+      actor: family.name,
+      action: 'attack',
+      details: `${family.name} attacked ${target.name} with ${muscleToSend} muscle.`,
+      result: `Defeated! Lost ${combat.attackerLosses}, defender lost ${combat.defenderLosses}.`,
+    };
+  }
+}
+
+function executeAIClaim(state: SaveState, familyId: string, unclaimed: Territory[]): GameEvent {
+  const family = state.families[familyId];
+  const target = unclaimed[Math.floor(Math.random() * unclaimed.length)];
+  target.owner = familyId;
+  // Move 1 muscle from strongest territory
+  const myTerritories = state.territories.filter(t => t.owner === familyId && t.muscle > 1 && t.id !== target.id);
+  if (myTerritories.length > 0) {
+    myTerritories.sort((a, b) => b.muscle - a.muscle);
+    myTerritories[0].muscle--;
+    target.muscle = 1;
+  }
+  return {
+    turn: state.turn,
+    actor: family.name,
+    action: 'claim',
+    details: `${family.name} claimed ${target.name}.`,
+  };
+}
+
+function executeAIHire(state: SaveState, familyId: string): GameEvent {
+  const family = state.families[familyId];
+  const count = Math.min(3, Math.floor(family.wealth / MUSCLE_HIRE_COST));
+  if (count <= 0) return { turn: state.turn, actor: family.name, action: 'wait', details: `${family.name} can't afford muscle.` };
+
+  family.wealth -= count * MUSCLE_HIRE_COST;
+  // Place hired muscle on weakest territory
+  const myTerritories = state.territories.filter(t => t.owner === familyId);
+  myTerritories.sort((a, b) => a.muscle - b.muscle);
+  myTerritories[0].muscle += count;
+
+  return {
+    turn: state.turn,
+    actor: family.name,
+    action: 'hire',
+    details: `${family.name} hired ${count} muscle ($${count * MUSCLE_HIRE_COST}), stationed at ${myTerritories[0].name}.`,
+  };
+}
+
+function executeAIUpgrade(state: SaveState, familyId: string, target: Territory): GameEvent {
+  const family = state.families[familyId];
+  family.wealth -= TERRITORY_UPGRADE_COST;
+  target.level = Math.min(MAX_TERRITORY_LEVEL, target.level + 1);
+  return {
+    turn: state.turn,
+    actor: family.name,
+    action: 'upgrade',
+    details: `${family.name} upgraded ${target.name} to level ${target.level} ($${TERRITORY_UPGRADE_COST}).`,
+  };
+}
+
+// ── Turn Processing ──
+
+function processEconomy(): GameEvent[] {
+  const events: GameEvent[] = [];
+  for (const familyId of Object.keys(gameState.families)) {
+    const result = processFamilyEconomy(gameState, familyId);
+    gameState.families[familyId].wealth = result.netWealth;
+    const family = gameState.families[familyId];
+    const income = result.income;
+    const upkeep = result.upkeep;
+    events.push({
+      turn: gameState.turn,
+      actor: family.name,
+      action: 'income',
+      details: `${family.name}: earned $${income}, upkeep $${upkeep}, net $${income - upkeep}. Wealth: $${family.wealth}${result.deserted > 0 ? `. ${result.deserted} muscle deserted!` : ''}`,
+    });
+  }
+  return events;
+}
+
+function processAITurns(): GameEvent[] {
+  // Fallback mechanical AI — used when LLM bridge is unavailable
+  const events: GameEvent[] = [];
+  const aiFamilies = Object.keys(gameState.families).filter(f => f !== gameState.playerFamily);
+  for (const familyId of aiFamilies) {
+    const eliminated = getEliminatedFamilies(gameState);
+    if (eliminated.includes(familyId)) continue;
+    const event = aiDecideAction(familyId, gameState);
+    if (event) {
+      events.push(event);
+    }
+  }
+  return events;
+}
+
+/**
+ * Execute an AI action returned by the LLM agent.
+ * The agent decides WHAT to do; this function executes the mechanics.
+ */
+function executeAIAction(familyId: string, action: AIAction): GameEvent {
+  const family = gameState.families[familyId];
+  if (!family) {
+    return { turn: gameState.turn, actor: familyId, action: 'wait', details: 'Family not found.' };
+  }
+
+  const tauntSuffix = action.taunt ? ` "${action.taunt}"` : '';
+
+  switch (action.action) {
+    case 'attack': {
+      if (!action.target) {
+        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} considered an attack but had no target.${tauntSuffix}` };
+      }
+      const target = gameState.territories.find(t => t.id === action.target);
+      if (!target || target.owner === familyId || target.owner === null) {
+        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} targeted invalid territory.${tauntSuffix}` };
+      }
+      return { ...executeAIAttack(gameState, familyId, target), details: `${family.name} attacked ${target.name} (${gameState.families[target.owner!]?.name || 'unknown'}). ${action.reasoning}${tauntSuffix}` };
     }
 
-    // Check if messages changed
-    const currentMessageCount = saveData.messages?.length || 0;
-    if (currentMessageCount !== lastMessageCount) {
-      console.log(`📋 MESSAGES CHANGED: ${currentMessageCount} messages (was ${lastMessageCount})`);
-      lastMessageCount = currentMessageCount;
-
-      // Extract tasks and send update to all browsers
-      const tasks = extractTasksFromSaveData(saveData);
-      console.log(`📋 Sending tasks update from save.json: ${tasks.length} tasks`);
-      for (const [id, client] of browserClients) {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify({
-            type: 'tasks_update',
-            tasks: tasks,
-          }));
-        }
+    case 'claim': {
+      const unclaimed = action.target
+        ? gameState.territories.filter(t => t.id === action.target && t.owner === null)
+        : gameState.territories.filter(t => t.owner === null);
+      if (unclaimed.length === 0) {
+        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} tried to claim territory but none available.${tauntSuffix}` };
       }
+      const result = executeAIClaim(gameState, familyId, unclaimed);
+      return { ...result, details: `${result.details} ${action.reasoning}${tauntSuffix}` };
     }
 
-    // Check if turn changed OR territory ownership changed
-    const currentTerritoryHash = JSON.stringify(saveData.territoryOwnership || {});
-    if ((saveData.turn !== undefined && saveData.turn !== lastKnownTurn) || currentTerritoryHash !== lastTerritoryHash) {
-      if (saveData.turn !== lastKnownTurn) {
-        console.log(`🔄 Turn changed: ${saveData.turn} (was ${lastKnownTurn})`);
+    case 'hire': {
+      if (family.wealth < MUSCLE_HIRE_COST) {
+        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to hire but can't afford it.${tauntSuffix}` };
       }
-      if (currentTerritoryHash !== lastTerritoryHash) {
-        console.log(`🗺️ Territory ownership changed`);
-      }
-      lastKnownTurn = saveData.turn;
-      lastTerritoryHash = currentTerritoryHash;
-
-      // Broadcast game state update
-      for (const [id, client] of browserClients) {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify({
-            type: 'game_state_update',
-            gameState: {
-              turn: saveData.turn,
-              phase: saveData.phase || 'playing',
-              territoryOwnership: saveData.territoryOwnership || {},
-              deceased: saveData.deceased || [],
-            },
-          }));
-        }
-      }
+      const result = executeAIHire(gameState, familyId);
+      return { ...result, details: `${result.details} ${action.reasoning}${tauntSuffix}` };
     }
 
-    // Check if player state changed
-    if (saveData.player) {
-      const p = saveData.player;
-      if (p.wealth !== lastPlayerWealth || p.respect !== lastPlayerRespect || p.rank !== lastPlayerRank || (p.family || 'None') !== lastPlayerFamily) {
-        console.log(`👤 Player state changed: wealth=${p.wealth}, respect=${p.respect}, rank=${p.rank}, family=${p.family}`);
-        lastPlayerWealth = p.wealth;
-        lastPlayerRespect = p.respect;
-        lastPlayerRank = p.rank || '';
-        lastPlayerFamily = p.family || 'None';
+    case 'upgrade': {
+      const myTerritories = gameState.territories.filter(t => t.owner === familyId);
+      const target = action.target
+        ? myTerritories.find(t => t.id === action.target && t.level < MAX_TERRITORY_LEVEL)
+        : myTerritories.filter(t => t.level < MAX_TERRITORY_LEVEL).sort((a, b) => a.level - b.level)[0];
+      if (!target || family.wealth < TERRITORY_UPGRADE_COST) {
+        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade but couldn't.${tauntSuffix}` };
+      }
+      const result = executeAIUpgrade(gameState, familyId, target);
+      return { ...result, details: `${result.details} ${action.reasoning}${tauntSuffix}` };
+    }
 
-        for (const [id, client] of browserClients) {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({
-              type: 'player_state_update',
-              player: {
-                name: p.name || 'Player',
-                rank: p.rank || 'Outsider',
-                family: p.family || 'None',
-                wealth: p.wealth ?? 0,
-                respect: p.respect ?? 0,
-                loyalty: p.loyalty ?? 50,
-              },
-            }));
+    case 'wait':
+    default:
+      return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} bides their time. ${action.reasoning}${tauntSuffix}` };
+  }
+}
+
+/**
+ * Process AI diplomacy message from LLM response.
+ */
+function processAIDiplomacy(familyId: string, action: AIAction): GameEvent | null {
+  if (!action.diplomacy) return null;
+
+  const family = gameState.families[familyId];
+  const { type, target, targetFamily } = action.diplomacy;
+
+  // Validate
+  if (!gameState.families[target]) return null;
+  if (target === familyId) return null;
+  if (type === 'coordinate_attack' && (!targetFamily || !gameState.families[targetFamily])) return null;
+
+  const msg: DiplomacyMessage = {
+    from: familyId,
+    to: target,
+    type,
+    targetFamily: targetFamily || undefined,
+    turn: gameState.turn,
+  };
+  gameState.diplomacy.push(msg);
+
+  const typeLabels: Record<string, string> = {
+    partnership: 'proposed a partnership with',
+    coordinate_attack: `proposed coordinating an attack on ${gameState.families[targetFamily || '']?.name || targetFamily} with`,
+    war: 'declared war on',
+    intel: 'shared intel with',
+  };
+
+  return {
+    turn: gameState.turn,
+    actor: family.name,
+    action: 'diplomacy',
+    details: `${family.name} ${typeLabels[type] || type} ${gameState.families[target].name}.`,
+  };
+}
+
+/**
+ * LLM-driven turn processing — spawns Claude CLI, gets decisions from each family agent.
+ */
+async function processAITurnsLLM(broadcastEvent: (event: GameEvent) => void): Promise<GameEvent[]> {
+  const events: GameEvent[] = [];
+  const aiFamilies = Object.keys(gameState.families).filter(f => f !== gameState.playerFamily);
+
+  let bridge: ClaudeAgentBridge | null = null;
+
+  try {
+    // Create and spawn the bridge
+    bridge = new ClaudeAgentBridge({ port: 3456 });
+    agentBridges.set(bridge.id, bridge);
+
+    await bridge.spawn();
+    console.log(`[next-turn] Claude bridge connected, processing ${aiFamilies.length} families`);
+
+    // Process each family sequentially
+    for (const familyId of aiFamilies) {
+      const eliminated = getEliminatedFamilies(gameState);
+      if (eliminated.includes(familyId)) continue;
+
+      const familyName = gameState.families[familyId]?.name || familyId;
+
+      try {
+        // Broadcast that this family is thinking
+        broadcastEvent({
+          turn: gameState.turn,
+          actor: familyName,
+          action: 'thinking',
+          details: `${familyName} is deliberating...`,
+        });
+
+        // Build prompt with full game context
+        const prompt = buildFamilyPrompt(familyId, gameState);
+
+        // Send to Claude and wait for response
+        const response = await bridge.sendPrompt(prompt);
+        console.log(`[next-turn] ${familyName} response: ${response.substring(0, 200)}`);
+
+        // Parse the LLM response
+        const aiAction = parseAIResponse(response);
+
+        if (aiAction) {
+          // Process diplomacy first
+          const diplomacyEvent = processAIDiplomacy(familyId, aiAction);
+          if (diplomacyEvent) {
+            events.push(diplomacyEvent);
+            broadcastEvent(diplomacyEvent);
           }
+
+          // Execute the action
+          const actionEvent = executeAIAction(familyId, aiAction);
+          events.push(actionEvent);
+          broadcastEvent(actionEvent);
+        } else {
+          // Failed to parse — fallback to mechanical AI for this family
+          console.warn(`[next-turn] Failed to parse LLM response for ${familyName}, using fallback`);
+          const fallbackEvent = aiDecideAction(familyId, gameState);
+          if (fallbackEvent) {
+            events.push(fallbackEvent);
+            broadcastEvent(fallbackEvent);
+          }
+        }
+      } catch (e) {
+        console.error(`[next-turn] Error processing ${familyName}:`, e);
+        // Fallback to mechanical AI for this family
+        const fallbackEvent = aiDecideAction(familyId, gameState);
+        if (fallbackEvent) {
+          events.push(fallbackEvent);
+          broadcastEvent(fallbackEvent);
         }
       }
     }
   } catch (e) {
-    // Ignore read errors (file might be mid-write)
+    console.error('[next-turn] Bridge failed, falling back to mechanical AI:', e);
+    // Full fallback — use mechanical AI for all families
+    for (const familyId of aiFamilies) {
+      const eliminated = getEliminatedFamilies(gameState);
+      if (eliminated.includes(familyId)) continue;
+      const event = aiDecideAction(familyId, gameState);
+      if (event) {
+        events.push(event);
+        broadcastEvent(event);
+      }
+    }
+  } finally {
+    // Clean up bridge
+    if (bridge) {
+      agentBridges.delete(bridge.id);
+      bridge.kill();
+    }
+  }
+
+  return events;
+}
+
+function updateMuscleTotals() {
+  for (const familyId of Object.keys(gameState.families)) {
+    gameState.families[familyId].totalMuscle = gameState.territories
+      .filter(t => t.owner === familyId)
+      .reduce((s, t) => s + t.muscle, 0);
   }
 }
 
-// Initialize watcher when server starts
-setupSaveFileWatcher();
+async function processNextTurn(): Promise<{ events: GameEvent[]; winner: string | null }> {
+  gameState.turn++;
+  gameState.playerActed = false;
+  const turnEvents: GameEvent[] = [];
+
+  // Helper to broadcast and collect events
+  const broadcastEvent = (event: GameEvent) => {
+    broadcast({ type: 'turn_event', event });
+  };
+
+  // 1. Economy phase
+  const econEvents = processEconomy();
+  turnEvents.push(...econEvents);
+  for (const e of econEvents) {
+    broadcastEvent(e);
+  }
+
+  // 2. AI actions (LLM-driven with fallback)
+  const aiEvents = await processAITurnsLLM(broadcastEvent);
+  turnEvents.push(...aiEvents);
+
+  // 3. Update totals
+  updateMuscleTotals();
+
+  // 4. Check win condition
+  const winner = checkWinCondition(gameState);
+  if (winner) {
+    gameState.phase = 'ended';
+    gameState.winner = winner;
+    const winEvent: GameEvent = {
+      turn: gameState.turn,
+      actor: gameState.families[winner]?.name || winner,
+      action: 'victory',
+      details: `${gameState.families[winner]?.name || winner} has conquered all territories!`,
+    };
+    turnEvents.push(winEvent);
+    broadcastEvent(winEvent);
+  }
+
+  // 5. Check eliminations
+  const eliminated = getEliminatedFamilies(gameState);
+  for (const fid of eliminated) {
+    const elimEvent: GameEvent = {
+      turn: gameState.turn,
+      actor: gameState.families[fid]?.name || fid,
+      action: 'eliminated',
+      details: `${gameState.families[fid]?.name || fid} has been eliminated!`,
+    };
+    turnEvents.push(elimEvent);
+    broadcastEvent(elimEvent);
+  }
+
+  gameState.events.push(...turnEvents);
+  saveState();
+  return { events: turnEvents, winner };
+}
+
+// ── Player Actions ──
+
+type ActionResult = { success: boolean; message: string; events: GameEvent[] };
+
+function playerHireMuscle(count: number, territoryId: string): ActionResult {
+  const family = gameState.families[gameState.playerFamily!];
+  const territory = gameState.territories.find(t => t.id === territoryId && t.owner === gameState.playerFamily);
+  if (!territory) return { success: false, message: 'You do not own that territory.', events: [] };
+
+  const cost = count * MUSCLE_HIRE_COST;
+  if (family.wealth < cost) return { success: false, message: `Not enough wealth. Need $${cost}, have $${family.wealth}.`, events: [] };
+
+  family.wealth -= cost;
+  territory.muscle += count;
+  updateMuscleTotals();
+  const event: GameEvent = {
+    turn: gameState.turn,
+    actor: family.name,
+    action: 'hire',
+    details: `Hired ${count} muscle for $${cost}, stationed at ${territory.name}.`,
+  };
+  gameState.events.push(event);
+  saveState();
+  return { success: true, message: event.details, events: [event] };
+}
+
+function playerAttack(fromTerritoryIds: string[], targetTerritoryId: string, musclePerTerritory: Record<string, number>): ActionResult {
+  const family = gameState.families[gameState.playerFamily!];
+  const target = gameState.territories.find(t => t.id === targetTerritoryId);
+  if (!target) return { success: false, message: 'Invalid target territory.', events: [] };
+  if (target.owner === gameState.playerFamily) return { success: false, message: 'Cannot attack your own territory.', events: [] };
+
+  // Validate and collect muscle
+  let totalMuscle = 0;
+  const sources: { territory: Territory; amount: number }[] = [];
+  for (const [tid, amount] of Object.entries(musclePerTerritory)) {
+    const t = gameState.territories.find(tt => tt.id === tid && tt.owner === gameState.playerFamily);
+    if (!t) return { success: false, message: `You don't own territory ${tid}.`, events: [] };
+    if (amount > t.muscle) return { success: false, message: `Not enough muscle in ${t.name}. Has ${t.muscle}, trying to send ${amount}.`, events: [] };
+    if (amount > 0) {
+      sources.push({ territory: t, amount });
+      totalMuscle += amount;
+    }
+  }
+
+  if (totalMuscle <= 0) return { success: false, message: 'Must send at least 1 muscle.', events: [] };
+
+  const combat = resolveCombat(totalMuscle, target.muscle);
+
+  // Remove sent muscle from source territories
+  for (const src of sources) {
+    src.territory.muscle -= src.amount;
+  }
+
+  // Apply defender losses
+  target.muscle = Math.max(0, target.muscle - combat.defenderLosses);
+
+  const events: GameEvent[] = [];
+  if (combat.success) {
+    const prevOwner = target.owner;
+    target.owner = gameState.playerFamily!;
+    const surviving = totalMuscle - combat.attackerLosses;
+    target.muscle += surviving;
+    target.level = Math.max(1, target.level - 1);
+    const event: GameEvent = {
+      turn: gameState.turn,
+      actor: family.name,
+      action: 'attack',
+      details: `Attacked ${target.name}${prevOwner ? ` (${gameState.families[prevOwner]?.name})` : ''} with ${totalMuscle} muscle.`,
+      result: `Victory! Captured ${target.name}. Lost ${combat.attackerLosses}, they lost ${combat.defenderLosses}.`,
+    };
+    events.push(event);
+  } else {
+    // Survivors return to first source territory
+    const surviving = totalMuscle - combat.attackerLosses;
+    if (surviving > 0 && sources.length > 0) {
+      sources[0].territory.muscle += surviving;
+    }
+    const event: GameEvent = {
+      turn: gameState.turn,
+      actor: family.name,
+      action: 'attack',
+      details: `Attacked ${target.name} with ${totalMuscle} muscle.`,
+      result: `Defeated! Lost ${combat.attackerLosses}, they lost ${combat.defenderLosses}.`,
+    };
+    events.push(event);
+  }
+
+  updateMuscleTotals();
+
+  // Check win condition after attack
+  const winner = checkWinCondition(gameState);
+  if (winner) {
+    gameState.phase = 'ended';
+    gameState.winner = winner;
+    events.push({
+      turn: gameState.turn,
+      actor: gameState.families[winner]?.name || winner,
+      action: 'victory',
+      details: `${gameState.families[winner]?.name || winner} has conquered all territories!`,
+    });
+  }
+
+  gameState.events.push(...events);
+  saveState();
+  return { success: true, message: events[0].result || events[0].details, events };
+}
+
+function playerUpgrade(territoryId: string): ActionResult {
+  const family = gameState.families[gameState.playerFamily!];
+  const territory = gameState.territories.find(t => t.id === territoryId && t.owner === gameState.playerFamily);
+  if (!territory) return { success: false, message: 'You do not own that territory.', events: [] };
+  if (territory.level >= MAX_TERRITORY_LEVEL) return { success: false, message: `${territory.name} is already max level.`, events: [] };
+  if (family.wealth < TERRITORY_UPGRADE_COST) return { success: false, message: `Not enough wealth. Need $${TERRITORY_UPGRADE_COST}, have $${family.wealth}.`, events: [] };
+
+  family.wealth -= TERRITORY_UPGRADE_COST;
+  territory.level++;
+  const event: GameEvent = {
+    turn: gameState.turn,
+    actor: family.name,
+    action: 'upgrade',
+    details: `Upgraded ${territory.name} to level ${territory.level} ($${TERRITORY_UPGRADE_COST}). Income: $${territoryIncome(territory.level)}/turn.`,
+  };
+  gameState.events.push(event);
+  saveState();
+  return { success: true, message: event.details, events: [event] };
+}
+
+function playerMoveMuscle(fromTerritoryId: string, toTerritoryId: string, amount: number): ActionResult {
+  const from = gameState.territories.find(t => t.id === fromTerritoryId && t.owner === gameState.playerFamily);
+  const to = gameState.territories.find(t => t.id === toTerritoryId && t.owner === gameState.playerFamily);
+  if (!from) return { success: false, message: 'You do not own the source territory.', events: [] };
+  if (!to) return { success: false, message: 'You do not own the destination territory.', events: [] };
+  if (amount <= 0 || amount > from.muscle) return { success: false, message: `Invalid amount. ${from.name} has ${from.muscle} muscle.`, events: [] };
+
+  from.muscle -= amount;
+  to.muscle += amount;
+  updateMuscleTotals();
+  const event: GameEvent = {
+    turn: gameState.turn,
+    actor: gameState.families[gameState.playerFamily!].name,
+    action: 'move',
+    details: `Moved ${amount} muscle from ${from.name} to ${to.name}.`,
+  };
+  gameState.events.push(event);
+  saveState();
+  return { success: true, message: event.details, events: [event] };
+}
+
+function playerSendMessage(toFamily: string, type: DiplomacyMessage['type'], targetFamily?: string): ActionResult {
+  const from = gameState.playerFamily!;
+  if (!gameState.families[toFamily]) return { success: false, message: 'Invalid target family.', events: [] };
+
+  const msg: DiplomacyMessage = { from, to: toFamily, type, targetFamily, turn: gameState.turn };
+  gameState.diplomacy.push(msg);
+
+  const typeLabels: Record<string, string> = {
+    partnership: 'proposed a partnership',
+    coordinate_attack: `proposed coordinating an attack on ${gameState.families[targetFamily || '']?.name || targetFamily}`,
+    war: 'declared war',
+    intel: `shared intel about ${gameState.families[targetFamily || '']?.name || targetFamily}`,
+  };
+
+  const event: GameEvent = {
+    turn: gameState.turn,
+    actor: gameState.families[from].name,
+    action: 'diplomacy',
+    details: `${gameState.families[from].name} ${typeLabels[type]} with ${gameState.families[toFamily].name}.`,
+  };
+  gameState.events.push(event);
+  saveState();
+  return { success: true, message: event.details, events: [event] };
+}
+
+// ── HTTP + WebSocket Server ──
 
 const app = new Hono();
-
-// Enable CORS
 app.use('*', cors());
 
-// Health check endpoint
-app.get('/health', (c) => {
-  return c.json({ status: 'ok', service: 'gangs-of-claude' });
+// Health check
+app.get('/api/health', (c) => c.json({ status: 'ok', turn: gameState.turn }));
+
+// Get game state
+app.get('/api/state', (c) => c.json(gameState));
+
+// Start new game (choose family)
+app.post('/api/start', async (c) => {
+  const body = await c.req.json();
+  const familyId = body.familyId;
+  if (!['marinelli', 'rossetti', 'falcone', 'moretti'].includes(familyId)) {
+    return c.json({ error: 'Invalid family' }, 400);
+  }
+  gameState = createInitialState();
+  gameState.playerFamily = familyId;
+  gameState.phase = 'playing';
+  gameState.turn = 1;
+  saveState();
+  broadcast({ type: 'state_update', state: gameState });
+  return c.json({ success: true, state: gameState });
 });
 
-// Endpoint to start CLI manually
-app.post('/api/start-cli', async (c) => {
+// Next turn (LLM-driven, async with real-time streaming)
+app.post('/api/next-turn', async (c) => {
+  if (gameState.phase !== 'playing') return c.json({ error: 'Game is not in progress.' }, 400);
+  if (isProcessingTurn) return c.json({ error: 'Turn is already being processed.' }, 400);
+
+  isProcessingTurn = true;
+
+  // Broadcast turn start
+  broadcast({ type: 'turn_start', turn: gameState.turn + 1 });
+
   try {
-    const result = await startCliProcess();
-    return c.json({ success: true, pid: result });
-  } catch (error: any) {
-    return c.json({ success: false, error: error.message }, 500);
+    const result = await processNextTurn();
+
+    // Events already broadcast in real-time during processing
+    broadcast({ type: 'turn_complete', turn: gameState.turn, winner: result.winner });
+    broadcast({ type: 'state_update', state: gameState });
+    return c.json({ success: true, turn: gameState.turn, events: result.events, winner: result.winner });
+  } catch (e) {
+    console.error('[api/next-turn] Error:', e);
+    return c.json({ error: 'Failed to process turn.' }, 500);
+  } finally {
+    isProcessingTurn = false;
   }
 });
 
-// Endpoint to stop CLI
-app.post('/api/stop-cli', async (c) => {
-  try {
-    stopCliProcess();
-    return c.json({ success: true });
-  } catch (error: any) {
-    return c.json({ success: false, error: error.message }, 500);
+// Player action
+app.post('/api/action', async (c) => {
+  if (gameState.phase !== 'playing') return c.json({ error: 'Game is not in progress.' }, 400);
+  if (!gameState.playerFamily) return c.json({ error: 'No family selected.' }, 400);
+  if (gameState.playerActed) return c.json({ error: 'You already used your action this turn. Click Next Turn to continue.' }, 400);
+
+  const body = await c.req.json();
+  const { action } = body;
+  let result: ActionResult;
+
+  switch (action) {
+    case 'hire':
+      result = playerHireMuscle(body.count || 1, body.territoryId);
+      break;
+    case 'attack':
+      result = playerAttack(body.fromTerritoryIds || [], body.targetTerritoryId, body.musclePerTerritory || {});
+      break;
+    case 'upgrade':
+      result = playerUpgrade(body.territoryId);
+      break;
+    case 'move':
+      result = playerMoveMuscle(body.fromTerritoryId, body.toTerritoryId, body.amount || 1);
+      break;
+    case 'message':
+      result = playerSendMessage(body.toFamily, body.messageType, body.targetFamily);
+      break;
+    default:
+      return c.json({ error: 'Unknown action: ' + action }, 400);
   }
+
+  if (result.success) {
+    gameState.playerActed = true;
+    broadcast({ type: 'state_update', state: gameState });
+  }
+  return c.json(result);
 });
 
-// Store connections and processes
-const browserClients = new Map<string, WebSocket>();
-let cliConnection: WebSocket | null = null;
-let cliProcess: ReturnType<typeof spawn> | null = null;
-let cliStdoutBuffer = '';
-const pendingPrompts: string[] = [];
+// Reset game
+app.post('/api/reset', async (c) => {
+  gameState = createInitialState();
+  saveState();
+  broadcast({ type: 'state_update', state: gameState });
+  return c.json({ success: true });
+});
 
-// Track pending next-turn commands to broadcast completion
-const pendingNextTurnRequests = new Set<string>();
-let isNextTurnInProgress = false;
-// Track CLI initialization — prompts sent before init may be lost
-let cliInitialized = false;
+// ── WebSocket for live updates ──
 
-// Retry configuration for API rate-limit errors
-const RETRY_DELAYS = [5000, 15000, 30000]; // 5s, 15s, 30s
-let retryCount = 0;
-let retryTimer: ReturnType<typeof setTimeout> | null = null;
-let lastFailedPrompt: string | null = null;
-let lastSubmittedPrompt: string | null = null;
-
-function isRateLimitError(resultText: string): boolean {
-  return /API Error:\s*429/i.test(resultText) ||
-         /rate.?limit/i.test(resultText) ||
-         /too many requests/i.test(resultText) ||
-         /Insufficient balance/i.test(resultText) ||
-         /overloaded/i.test(resultText);
-}
-
-function broadcastToAllBrowsers(msg: object) {
-  const json = JSON.stringify(msg);
-  for (const [, client] of browserClients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(json);
-    }
-  }
-}
-
-function cancelRetry() {
-  if (retryTimer) {
-    clearTimeout(retryTimer);
-    retryTimer = null;
-  }
-  retryCount = 0;
-  lastFailedPrompt = null;
-}
-
-function scheduleRetry(prompt: string) {
-  if (retryCount >= RETRY_DELAYS.length) {
-    console.log('❌ Max retries reached, giving up');
-    broadcastToAllBrowsers({ type: 'retry_failed', attempt: retryCount, maxAttempts: RETRY_DELAYS.length, message: 'Max retries reached. Please try again later.' });
-    cancelRetry();
-    return false;
-  }
-
-  const delay = RETRY_DELAYS[retryCount];
-  lastFailedPrompt = prompt;
-  console.log(`🔄 Scheduling retry ${retryCount + 1}/${RETRY_DELAYS.length} in ${delay / 1000}s for: ${prompt}`);
-
-  broadcastToAllBrowsers({
-    type: 'retry_scheduled',
-    attempt: retryCount + 1,
-    maxAttempts: RETRY_DELAYS.length,
-    delayMs: delay,
-    prompt,
-  });
-
-  retryTimer = setTimeout(() => {
-    retryTimer = null;
-    if (!cliConnection || cliConnection.readyState !== WebSocket.OPEN || !cliInitialized) {
-      console.log('❌ CLI not connected for retry');
-      broadcastToAllBrowsers({ type: 'retry_failed', attempt: retryCount, maxAttempts: RETRY_DELAYS.length, message: 'CLI disconnected during retry.' });
-      cancelRetry();
-      return;
-    }
-
-    retryCount++;
-    console.log(`🔄 Retrying (attempt ${retryCount}/${RETRY_DELAYS.length}): ${prompt}`);
-    broadcastToAllBrowsers({
-      type: 'retrying',
-      attempt: retryCount,
-      maxAttempts: RETRY_DELAYS.length,
-      prompt,
-    });
-
-    const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-    const ndjson = JSON.stringify({
-      type: 'user',
-      requestId,
-      message: { role: 'user', content: prompt },
-    }) + '\n';
-    cliConnection.send(ndjson);
-
-    if (prompt.trim() === '/next-turn') {
-      pendingNextTurnRequests.add(requestId);
-      isNextTurnInProgress = true;
-    }
-  }, delay);
-
-  return true;
-}
-
-// Start Claude Code CLI process
-async function startCliProcess() {
-  if (cliProcess) {
-    console.log('CLI process already running');
-    return cliProcess.pid;
-  }
-
-  console.log('🚀 Starting Claude Code CLI...');
-
-  cliProcess = spawn('claude', [
-    '--sdk-url', `ws://localhost:3456/ws/cli/auto`,
-    '--dangerously-skip-permissions',
-  ], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    cwd: rootDir,
-    env: { ...process.env },
-  });
-
-  cliProcess.stdout?.on('data', (data) => {
-    const text = data.toString();
-    console.log('CLI stdout:', text.substring(0, 500));
-    try {
-      writeFileSync('/tmp/ws-debug.log', `CLI stdout: ${text.substring(0, 500)}\n`, { flag: 'a' });
-    } catch (e) {}
-
-    // Forward to all browsers
-    for (const [id, client] of browserClients) {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({
-          type: 'content_delta',
-          delta: { text },
-        }));
-      }
-    }
-  });
-
-  cliProcess.stderr?.on('data', (data) => {
-    const text = data.toString();
-    console.error('CLI stderr:', text);
-    try {
-      writeFileSync('/tmp/ws-debug.log', `CLI stderr: ${text}\n`, { flag: 'a' });
-    } catch (e) {}
-
-    // Forward errors to browsers
-    for (const [id, client] of browserClients) {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({
-          type: 'content_delta',
-          delta: { text: `[Error: ${text}]` },
-        }));
-      }
-    }
-  });
-
-  cliProcess.on('close', (code) => {
-    console.log(`CLI process exited with code ${code}`);
-    cliProcess = null;
-
-    // Notify browsers
-    for (const [id, client] of browserClients) {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({
-          type: 'status',
-          status: 'disconnected',
-        }));
-      }
-    }
-  });
-
-  cliProcess.on('error', (error) => {
-    console.error('CLI process error:', error);
-    cliProcess = null;
-  });
-
-  // Wait a bit for the process to start
-  await new Promise(resolve => setTimeout(resolve, 1000));
-
-  return cliProcess.pid;
-}
-
-function stopCliProcess() {
-  if (cliProcess) {
-    console.log('🛑 Stopping CLI process...');
-    cliProcess.kill('SIGTERM');
-    cliProcess = null;
-  }
-  cliConnection = null;
-  cliInitialized = false;
-  pendingPrompts.length = 0;
-}
-
-// Create WebSocket server for browsers
-Bun.serve({
-  hostname: '0.0.0.0',
+const server = Bun.serve({
   port: 3456,
+  // LLM agent calls can take 60s+ per turn — disable idle timeout
+  idleTimeout: 255, // max value in Bun (seconds)
   fetch(req, server) {
     const url = new URL(req.url);
 
-    if (url.pathname === '/health') {
-      return new Response(JSON.stringify({ status: 'ok', service: 'gangs-of-claude' }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // API endpoints
-    if (url.pathname === '/api/start-cli' && req.method === 'POST') {
-      return (async () => {
-        try {
-          await startCliProcess();
-          return new Response(JSON.stringify({ success: true }), {
-            headers: { 'Content-Type': 'application/json' },
-          });
-        } catch (error: any) {
-          return new Response(JSON.stringify({ success: false, error: error.message }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-      })();
-    }
-
-    if (url.pathname === '/api/stop-cli' && req.method === 'POST') {
-      stopCliProcess();
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // WebSocket upgrade for Claude Code CLI
-    // Must check BEFORE /ws to avoid path overlap
-    // Matches /ws/cli/:session pattern
-    if (url.pathname.startsWith('/ws/cli/')) {
-      const sessionMatch = url.pathname.match(/^\/ws\/cli\/([^/]+)$/);
-      const sessionId = sessionMatch ? sessionMatch[1] : url.searchParams.get('session') || 'cli';
-      return server.upgrade(req, {
-        data: { type: 'cli', sessionId },
-      });
-    }
-
-    // WebSocket upgrade for browsers
+    // Browser WebSocket upgrade
     if (url.pathname === '/ws') {
-      const clientType = url.searchParams.get('type') || 'browser';
-      const sessionId = url.searchParams.get('session') || 'unknown';
-
-      if (clientType === 'browser') {
-        return server.upgrade(req, {
-          data: { type: 'browser', sessionId },
-        });
-      }
+      const sessionId = url.searchParams.get('session') || crypto.randomUUID();
+      if (server.upgrade(req, { data: { sessionId, type: 'browser' } })) return;
+      return new Response('WebSocket upgrade failed', { status: 500 });
     }
 
-    // Also support /cli for backwards compatibility
-    if (url.pathname === '/cli') {
-      return server.upgrade(req, {
-        data: { type: 'cli', sessionId: url.searchParams.get('session') || 'cli' },
-      });
+    // Claude Agent WebSocket upgrade
+    const agentMatch = url.pathname.match(/^\/ws\/agent\/(.+)$/);
+    if (agentMatch) {
+      const agentSessionId = agentMatch[1];
+      if (server.upgrade(req, { data: { sessionId: agentSessionId, type: 'agent' } })) return;
+      return new Response('Agent WebSocket upgrade failed', { status: 500 });
     }
 
-    return new Response('Not found', { status: 404 });
+    // Forward to Hono
+    return app.fetch(req, { ip: server.requestIP(req) });
   },
-
   websocket: {
-    open(ws) {
-      const data = ws.data as { type: string; sessionId: string };
-
-      console.log(`🔗 WebSocket connected: ${data.type} (${data.sessionId})`);
-
-      if (data.type === 'cli') {
-        cliConnection = ws;
-        cliInitialized = false; // Wait for init message before flushing prompts
-
-        // Notify all browsers that CLI is connecting (not fully ready yet)
-        for (const [id, client] of browserClients) {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({
-              type: 'status',
-              status: 'connecting',
-              sessionId: data.sessionId,
-            }));
-          }
-        }
-      } else {
-        browserClients.set(data.sessionId, ws);
-
-        // Auto-start CLI if not running
-        if (!cliProcess && !cliConnection) {
-          console.log('📱 Browser connected - auto-starting CLI...');
-          startCliProcess().catch(err => {
-            console.error('Failed to auto-start CLI:', err);
-          });
-        }
-
-        // Send current CLI status to the newly connected browser
-        ws.send(JSON.stringify({
-          type: 'status',
-          status: cliConnection ? 'connected' : (cliProcess ? 'connecting' : 'waiting_for_cli'),
-          sessionId: data.sessionId,
-        }));
-
-        // Send initial game state from save.json to newly connected browser
-        try {
-          if (existsSync(saveJsonPath)) {
-            const saveData = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
-            if (saveData) {
-              if (saveData.player) {
-                ws.send(JSON.stringify({ type: 'player_state_update', player: saveData.player }));
-              }
-              if (saveData.events && Array.isArray(saveData.events)) {
-                ws.send(JSON.stringify({ type: 'events_update', events: saveData.events }));
-              }
-              if (saveData.turn !== undefined) {
-                ws.send(JSON.stringify({
-                  type: 'game_state_update',
-                  gameState: {
-                    turn: saveData.turn,
-                    phase: saveData.phase || 'playing',
-                    families: saveData.families,
-                    territoryOwnership: saveData.territoryOwnership || {},
-                    deceased: saveData.deceased || [],
-                  },
-                }));
-              }
-              if (saveData.messages) {
-                const tasks = extractTasksFromSaveData(saveData);
-                if (tasks.length > 0) {
-                  ws.send(JSON.stringify({ type: 'tasks_update', tasks }));
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.error('Error sending initial state to browser:', e);
-        }
-      }
-    },
-
-    message(ws, message) {
-      // Write to file for debugging
-      try {
-        writeFileSync('/tmp/ws-debug.log', `Message handler called: type=${ws.data?.type}, message=${typeof message === 'string' ? message.substring(0, 100) : '(binary)'}\n`, { flag: 'a' });
-      } catch (e) {
-        // Ignore
-      }
-      console.log('🔧 DEBUG: Message handler called, ws.data:', ws.data, 'message:', typeof message === 'string' ? message.substring(0, 100) : message);
-      const data = ws.data as { type: string; sessionId: string };
-
-      if (data.type === 'browser') {
-        // Message from browser - forward to CLI via WebSocket
-        console.log('📨 Received message from browser:', typeof message === 'string' ? message.substring(0, 100) : '(binary)');
-        try {
-          writeFileSync('/tmp/ws-debug.log', `Browser message: cliConnection=${!!cliConnection}, readyState=${cliConnection?.readyState}\n`, { flag: 'a' });
-        } catch (e) {}
-        // Handle state request from browser
-        try {
-          const msg = typeof message === 'string' ? JSON.parse(message) : message;
-          if (msg.type === 'request_state') {
-            console.log('📊 State requested by browser');
-            try {
-              if (existsSync(saveJsonPath)) {
-                const saveData = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
-                if (saveData.player) {
-                  ws.send(JSON.stringify({
-                    type: 'player_state_update',
-                    player: saveData.player,
-                  }));
-                  console.log('📊 Sent player state to browser');
-                }
-                // Also send game state (current turn, etc.)
-                if (saveData.turn !== undefined) {
-                  ws.send(JSON.stringify({
-                    type: 'game_state_update',
-                    gameState: {
-                      turn: saveData.turn,
-                      phase: saveData.phase || 'playing',
-                      families: saveData.families,
-                      territoryOwnership: saveData.territoryOwnership || {},
-                      deceased: saveData.deceased || [],
-                    },
-                  }));
-                }
-              } else {
-                console.log('⚠️ save.json not found at:', saveJsonPath);
-              }
-            } catch (e) {
-              console.error('Error reading save.json for state request:', e);
-            }
-            return; // Don't forward to CLI
-          }
-
-          // Handle events request from browser
-          if (msg.type === 'request_events') {
-            console.log('📊 Events requested by browser');
-            try {
-              if (existsSync(saveJsonPath)) {
-                const saveData = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
-                if (saveData.events && Array.isArray(saveData.events)) {
-                  ws.send(JSON.stringify({
-                    type: 'events_update',
-                    events: saveData.events,
-                  }));
-                  console.log(`📊 Sent ${saveData.events.length} events to browser`);
-                }
-                // Also send current game state
-                if (saveData.turn !== undefined) {
-                  ws.send(JSON.stringify({
-                    type: 'game_state_update',
-                    gameState: {
-                      turn: saveData.turn,
-                      phase: saveData.phase || 'playing',
-                      families: saveData.families,
-                      territoryOwnership: saveData.territoryOwnership || {},
-                      deceased: saveData.deceased || [],
-                    },
-                  }));
-                }
-              }
-            } catch (e) {
-              console.error('Error reading save.json for events request:', e);
-            }
-            return; // Don't forward to CLI
-          }
-
-          // Handle tasks request from browser
-          if (msg.type === 'request_tasks') {
-            console.log('📋 Tasks requested by browser');
-            try {
-              if (existsSync(saveJsonPath)) {
-                const saveData = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
-                const tasks = extractTasksFromSaveData(saveData);
-                ws.send(JSON.stringify({
-                  type: 'tasks_update',
-                  tasks: tasks,
-                }));
-                console.log(`📋 Sent ${tasks.length} tasks to browser`);
-              }
-            } catch (e) {
-              console.error('Error reading save.json for tasks request:', e);
-            }
-            return;
-          }
-
-          // Handle player action logging
-          if (msg.type === 'log_player_action') {
-            console.log('📝 Logging player action:', msg.action);
-            try {
-              if (existsSync(saveJsonPath)) {
-                const saveData = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
-                if (!saveData.events) {
-                  saveData.events = [];
-                }
-                // Add the player action to events
-                saveData.events.push({
-                  turn: saveData.turn || 0,
-                  type: 'action',
-                  actor: msg.actor || 'Player',
-                  action: msg.action,
-                  target: msg.target,
-                  description: msg.description,
-                  timestamp: Date.now(),
-                });
-                writeFileSync(saveJsonPath, JSON.stringify(saveData, null, 2));
-                console.log('📝 Player action logged to save.json');
-
-                // Broadcast update to all browsers
-                for (const [id, client] of browserClients) {
-                  if (client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify({
-                      type: 'events_update',
-                      events: saveData.events,
-                    }));
-                  }
-                }
-              }
-            } catch (e) {
-              console.error('Error logging player action:', e);
-            }
-            return; // Don't forward to CLI
-          }
-        } catch (e) {
-          // Not JSON, continue to forward
-        }
-
-        // Extract prompt robustly from either JSON envelope or raw text.
-        let prompt = '';
-        if (typeof message === 'string') {
-          try {
-            const msg = JSON.parse(message);
-            prompt = String(msg.prompt || msg.content || '');
-          } catch {
-            prompt = message;
-          }
+    open(ws: any) {
+      const { sessionId, type } = ws.data || {};
+      if (type === 'agent') {
+        // Claude CLI agent connected
+        const bridge = agentBridges.get(sessionId);
+        if (bridge) {
+          bridge.handleCliConnection(ws);
+          console.log(`🤖 Agent connected: ${sessionId}`);
         } else {
-          const msg: any = message;
-          prompt = String(msg?.prompt || msg?.content || '');
+          console.warn(`⚠️ Agent connected but no bridge found: ${sessionId}`);
         }
-
-        if (!prompt.trim()) {
-          ws.send(JSON.stringify({
-            type: 'error',
-            message: 'Empty prompt received',
-          }));
-          return;
-        }
-
-        if (cliConnection && cliConnection.readyState === WebSocket.OPEN && cliInitialized) {
-          try {
-            const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-            const ndjson = JSON.stringify({
-              type: 'user',
-              requestId,
-              message: {
-                role: 'user',
-                content: prompt,
-              },
-            }) + '\n';
-            cliConnection.send(ndjson);
-            lastSubmittedPrompt = prompt;
-            cancelRetry(); // Reset retry state on fresh command
-
-            // Track if this is a next-turn command
-            if (prompt.trim() === '/next-turn') {
-              pendingNextTurnRequests.add(requestId);
-              isNextTurnInProgress = true;
-              console.log('🎯 Tracking next-turn request:', requestId);
-              // NOTE: Turn increment is handled by the PreToolUse hook (increment-turn.sh).
-              // Do NOT increment here to avoid double-incrementing.
-            }
-          } catch (e) {
-            console.error('Error forwarding to CLI WebSocket:', e);
-          }
-          return;
-        }
-
-        // CLI websocket not ready yet: queue prompt and start CLI if needed.
-        pendingPrompts.push(prompt);
-        ws.send(JSON.stringify({
-          type: 'info',
-          message: 'CLI starting up... command queued.',
-        }));
-
-        if (!cliProcess && !cliConnection) {
-          // CLI not connected - auto-start it
-          console.log('📱 CLI not connected - auto-starting...');
-          try {
-            writeFileSync('/tmp/ws-debug.log', `CLI NOT connected, auto-starting...\n`, { flag: 'a' });
-          } catch (e) {}
-          startCliProcess().then(() => {
-            console.log('✅ CLI auto-started; queued prompts will flush on CLI websocket connect');
-          }).catch(err => {
-            console.error('Failed to auto-start CLI:', err);
-            ws.send(JSON.stringify({
-              type: 'error',
-              message: 'Failed to start CLI: ' + err.message,
-            }));
-          });
-        }
-        return;
       } else {
-        // Message from CLI - forward to all browsers
-        const messageStr = typeof message === 'string' ? message : String(message);
-        console.log('📥 Received from CLI:', messageStr.substring(0, 200));
+        // Browser connected
+        browserClients.set(sessionId, ws);
+        console.log(`🌐 Browser connected: ${sessionId} (${browserClients.size} total)`);
+        ws.send(JSON.stringify({ type: 'state_update', state: gameState }));
+      }
+    },
+    message(ws: any, msg: string) {
+      const { sessionId, type } = ws.data || {};
+      if (type === 'agent') {
+        // Message from Claude CLI
+        const bridge = agentBridges.get(sessionId);
+        if (bridge) {
+          bridge.handleCliMessage(msg as string);
+        }
+      } else {
+        // Message from browser
         try {
-          writeFileSync('/tmp/ws-debug.log', `CLI message: ${messageStr.substring(0, 200)}\n`, { flag: 'a' });
-        } catch (e) {}
-        const lines = messageStr.split('\n').filter(line => line.trim());
-
-        for (const line of lines) {
-          try {
-            const cliData = JSON.parse(line);
-            console.log('🔄 Transforming CLI message:', cliData.type);
-
-            // Detect CLI ready — flush pending prompts once we receive any message
-            if (!cliInitialized) {
-              cliInitialized = true;
-              console.log('✅ CLI initialized (first message received), flushing', pendingPrompts.length, 'queued prompts');
-              // Notify browsers
-              for (const [id, client] of browserClients) {
-                if (client.readyState === WebSocket.OPEN) {
-                  client.send(JSON.stringify({ type: 'status', status: 'connected' }));
-                }
-              }
-              // Flush queued prompts
-              while (pendingPrompts.length > 0 && cliConnection && cliConnection.readyState === WebSocket.OPEN) {
-                const prompt = pendingPrompts.shift()!;
-                const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-                const ndjson = JSON.stringify({
-                  type: 'user',
-                  requestId,
-                  message: { role: 'user', content: prompt },
-                }) + '\n';
-                cliConnection.send(ndjson);
-                if (prompt.trim() === '/next-turn') {
-                  pendingNextTurnRequests.add(requestId);
-                  isNextTurnInProgress = true;
-                }
-                console.log('📤 Flushed queued prompt:', prompt.substring(0, 50));
-              }
-            }
-
-            // Handle control_request specially - send response back to CLI
-            if (cliData.type === 'control_request' && cliData.request_id) {
-              const controlResponse = {
-                type: 'control_response',
-                request_id: cliData.request_id,
-                response: {
-                  approved: true,
-                },
-              };
-              console.log('📤 Sending control_response to CLI:', controlResponse);
-              try {
-                writeFileSync('/tmp/ws-debug.log', `Sending control_response: ${JSON.stringify(controlResponse)}\n`, { flag: 'a' });
-              } catch (e) {}
-              ws.send(JSON.stringify(controlResponse) + '\n');  // NDJSON format - add newline!
-              continue; // Don't forward to browser
-            }
-
-            const browserMessage = transformCliMessage(cliData);
-            try {
-              writeFileSync('/tmp/ws-debug.log', `Transformed: ${JSON.stringify(browserMessage)?.substring(0, 200)}\n`, { flag: 'a' });
-            } catch (e) {}
-
-            // Check if this was a command result - do this BEFORE the continue so we always update state
-            if (cliData.type === 'result' || (cliData.subtype === 'success' && cliData.result)) {
-              const resultText = String(cliData.result || '');
-              const isError = cliData.is_error === true;
-
-              // Check for rate-limit / API errors and auto-retry
-              if (isError && isRateLimitError(resultText) && lastSubmittedPrompt) {
-                console.log('⚠️ Rate limit error detected, attempting retry for:', lastSubmittedPrompt);
-                const willRetry = scheduleRetry(lastSubmittedPrompt);
-                if (willRetry) {
-                  // Don't send turn_complete/command_complete — we're retrying
-                  // But still forward the error text to browser for visibility
-                  continue;
-                }
-                // If max retries reached, fall through to normal completion
-              } else {
-                // Successful result — reset retry state
-                cancelRetry();
-              }
-
-              console.log('🎯 Command completed, will update player state from save.json');
-              // CLI may return request_id (snake_case) or requestId (camelCase)
-              const responseRequestId = cliData.requestId || cliData.request_id;
-              // Check if this is a next-turn result by requestId or by the in-progress flag
-              // Check if this is a next-turn result.
-              // Use isNextTurnInProgress as the primary signal — it's set when
-              // /next-turn is sent and cleared here. The requestId match is a
-              // secondary check in case isNextTurnInProgress was cleared by a race.
-              const isNextTurnResult = isNextTurnInProgress ||
-                                       (responseRequestId && pendingNextTurnRequests.has(responseRequestId));
-              if (isNextTurnResult) {
-                if (responseRequestId) {
-                  pendingNextTurnRequests.delete(responseRequestId);
-                }
-                isNextTurnInProgress = false;
-                console.log('🎯 Next-turn command completed, will broadcast turn_complete after updates');
-              }
-              setTimeout(() => {
-                try {
-                  console.log('📁 Reading save.json from:', saveJsonPath);
-                  if (existsSync(saveJsonPath)) {
-                    const saveData = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
-                    console.log('📄 save.json player data:', saveData.player);
-                    // Send player state update
-                    if (saveData.player) {
-                      console.log('📊 Sending player state update from save.json');
-                      for (const [id, client] of browserClients) {
-                        if (client.readyState === WebSocket.OPEN) {
-                          client.send(JSON.stringify({
-                            type: 'player_state_update',
-                            player: saveData.player,
-                          }));
-                        }
-                      }
-                    }
-                    // Send events update
-                    if (saveData.events && Array.isArray(saveData.events)) {
-                      console.log('📊 Sending events update from save.json:', saveData.events.length, 'events');
-                      for (const [id, client] of browserClients) {
-                        if (client.readyState === WebSocket.OPEN) {
-                          client.send(JSON.stringify({
-                            type: 'events_update',
-                            events: saveData.events,
-                          }));
-                        }
-                      }
-                    }
-                    // Send game state update (includes turn number)
-                    if (saveData.turn !== undefined) {
-                      console.log('📊 Sending game state update from save.json:', 'turn', saveData.turn);
-                      for (const [id, client] of browserClients) {
-                        if (client.readyState === WebSocket.OPEN) {
-                          client.send(JSON.stringify({
-                            type: 'game_state_update',
-                            gameState: {
-                              turn: saveData.turn,
-                              phase: saveData.phase || 'playing',
-                              families: saveData.families,
-                              territoryOwnership: saveData.territoryOwnership || {},
-                              deceased: saveData.deceased || [],
-                            },
-                          }));
-                        }
-                      }
-                    }
-                    // Send tasks update (from messages with type: "order")
-                    try {
-                      const tasks = extractTasksFromSaveData(saveData);
-                      if (tasks.length > 0) {
-                        console.log('📋 Sending tasks update from save.json:', tasks.length, 'tasks');
-                        for (const [id, client] of browserClients) {
-                          if (client.readyState === WebSocket.OPEN) {
-                            client.send(JSON.stringify({
-                              type: 'tasks_update',
-                              tasks: tasks,
-                            }));
-                          }
-                        }
-                      }
-                    } catch (taskErr) {
-                      console.error('Error extracting tasks:', taskErr);
-                    }
-
-                  } else {
-                    console.log('⚠️ save.json not found at:', saveJsonPath);
-                  }
-
-                  // Apply turn income BEFORE broadcasting completion
-                  if (isNextTurnResult && existsSync(saveJsonPath)) {
-                    try {
-                      const incomeState = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
-                      if (incomeState.player && incomeState.player.family && incomeState.player.family !== 'none') {
-                        const familyKey = Object.keys(incomeState.families || {}).find(
-                          k => k.toLowerCase() === incomeState.player.family.toLowerCase()
-                        );
-                        const family = familyKey ? incomeState.families[familyKey] : null;
-                        const ownership = incomeState.territoryOwnership || {};
-                        const territoryCount = Object.values(ownership).filter(
-                          (v: any) => v && v.toLowerCase() === incomeState.player.family.toLowerCase()
-                        ).length;
-
-                        const income = calculateTurnIncome(incomeState.player, family, territoryCount);
-                        if (income.total > 0) {
-                          incomeState.player.wealth = (incomeState.player.wealth || 0) + income.total;
-                        }
-                        // Award respect per turn based on rank and activity
-                        const respectGains: Record<string, number> = {
-                          'Associate': 1, 'Soldier': 2, 'Capo': 3, 'Underboss': 4, 'Don': 5
-                        };
-                        const respectGain = respectGains[incomeState.player.rank] || 0;
-                        if (respectGain > 0) {
-                          incomeState.player.respect = (incomeState.player.respect || 0) + respectGain;
-                        }
-                        if (income.total > 0 || respectGain > 0) {
-                          // Log income as an event
-                          if (!incomeState.events) incomeState.events = [];
-                          const parts: string[] = [];
-                          if (income.total > 0) parts.push(`$${income.total} (${income.description})`);
-                          if (respectGain > 0) parts.push(`+${respectGain} respect`);
-                          incomeState.events.push({
-                            turn: incomeState.turn,
-                            actor: 'System',
-                            action: 'income',
-                            target: incomeState.player.family,
-                            result: `💰 Turn income: ${parts.join(', ')}`,
-                            outcome: 'success',
-                          });
-                          writeFileSync(saveJsonPath, JSON.stringify(incomeState, null, 2));
-                          console.log(`💰 Applied turn income: $${income.total}, +${respectGain} respect → player now has $${incomeState.player.wealth}, ${incomeState.player.respect} respect`);
-                          // Re-broadcast updated player state with new wealth and respect
-                          for (const [id, client] of browserClients) {
-                            if (client.readyState === WebSocket.OPEN) {
-                              client.send(JSON.stringify({
-                                type: 'player_state_update',
-                                player: incomeState.player,
-                              }));
-                              client.send(JSON.stringify({
-                                type: 'income_report',
-                                income: income,
-                              }));
-                            }
-                          }
-                        }
-                      }
-                    } catch (incomeErr) {
-                      console.error('Error applying turn income:', incomeErr);
-                    }
-                  }
-
-                  // Process deaths from combat events this turn
-                  if (isNextTurnResult && existsSync(saveJsonPath)) {
-                    try {
-                      const deathState = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
-                      const currentTurn = deathState.turn || 0;
-                      const deceased: string[] = deathState.deceased || [];
-                      const deceasedSet = new Set(deceased);
-                      const turnEvents = (deathState.events || []).filter((e: any) => e.turn === currentTurn);
-                      let deathsThisTurn = 0;
-
-                      // Check attack events for potential casualties
-                      for (const event of turnEvents) {
-                        const action = (event.action || '').toLowerCase();
-                        if (!['attack', 'plan_attack', 'eliminate'].includes(action)) continue;
-                        
-                        const target = (event.target || '').toLowerCase();
-                        if (!target) continue;
-                        
-                        // 8% chance per attack that a named character is a casualty
-                        const roll = Math.random() * 100;
-                        if (roll > 8) continue;
-                        
-                        // Find a living member of the target family
-                        const eligibleMembers = ALL_CHARACTERS.filter(m => 
-                          m.family === target && !deceasedSet.has(m.id) && m.role !== 'Don'
-                        );
-                        if (eligibleMembers.length === 0) continue;
-                        
-                        const victimIdx = Math.floor(Math.random() * eligibleMembers.length);
-                        const victim = eligibleMembers[victimIdx];
-                        const familyName = target.charAt(0).toUpperCase() + target.slice(1);
-                        
-                        // Mark as deceased
-                        deceased.push(victim.id);
-                        deceasedSet.add(victim.id);
-                        deathsThisTurn++;
-                        
-                        // Log death event
-                        deathState.events.push({
-                          turn: currentTurn,
-                          type: 'death',
-                          actor: event.actor,
-                          action: 'eliminate',
-                          target: victim.id,
-                          description: `${victim.fullName} was killed in the attack by ${event.actor}`,
-                          result: `💀 ${victim.fullName} (${victim.role}) of the ${familyName} family has been eliminated`,
-                          outcome: 'death',
-                        });
-                        
-                        // Reduce family soldier count
-                        const familyKey = Object.keys(deathState.families || {}).find(
-                          k => k.toLowerCase() === target
-                        );
-                        if (familyKey && deathState.families[familyKey]) {
-                          deathState.families[familyKey].soldiers = Math.max(0, 
-                            (deathState.families[familyKey].soldiers || 0) - 1
-                          );
-                        }
-                        
-                        console.log(`💀 ${victim.fullName} killed by ${event.actor}'s attack on ${familyName}`);
-                      }
-                      
-                      if (deathsThisTurn > 0) {
-                        deathState.deceased = deceased;
-                        writeFileSync(saveJsonPath, JSON.stringify(deathState, null, 2));
-                        console.log(`☠️ ${deathsThisTurn} casualties this turn`);
-                        
-                        // Broadcast deceased update to browsers
-                        for (const [id, client] of browserClients) {
-                          if (client.readyState === WebSocket.OPEN) {
-                            client.send(JSON.stringify({
-                              type: 'deceased_update',
-                              deceased: deceased,
-                            }));
-                          }
-                        }
-                      }
-                    } catch (deathErr) {
-                      console.error('Error processing deaths:', deathErr);
-                    }
-                  }
-
-                  // Broadcast completion signals AFTER all state updates
-                  // Re-read save.json one final time to get income/death events
-                  // that were added above, then broadcast before turn_complete.
-                  if (isNextTurnResult) {
-                    try {
-                      if (existsSync(saveJsonPath)) {
-                        const finalState = JSON.parse(readFileSync(saveJsonPath, 'utf-8'));
-                        if (finalState.events && Array.isArray(finalState.events)) {
-                          for (const [id, client] of browserClients) {
-                            if (client.readyState === WebSocket.OPEN) {
-                              client.send(JSON.stringify({
-                                type: 'events_update',
-                                events: finalState.events,
-                              }));
-                            }
-                          }
-                        }
-                      }
-                    } catch (e) {
-                      console.error('Error re-broadcasting final events:', e);
-                    }
-                    console.log('🏁 Turn processing complete, broadcasting turn_complete');
-                    broadcastTurnComplete();
-                  } else {
-                    // Broadcast command_complete for non-turn commands
-                    console.log('✅ Command complete, broadcasting command_complete');
-                    for (const [id, client] of browserClients) {
-                      if (client.readyState === WebSocket.OPEN) {
-                        client.send(JSON.stringify({
-                          type: 'command_complete',
-                        }));
-                      }
-                    }
-                  }
-                } catch (e) {
-                  console.error('Error reading save.json:', e);
-                }
-              }, 300); // Delay to ensure save.json has been written by CLI
-            }
-
-            // Skip null messages (system, etc.)
-            if (browserMessage === null) {
-              continue;
-            }
-
-            // Handle array of messages (e.g., multiple tool_calls)
-            const messagesToSend = Array.isArray(browserMessage) ? browserMessage : [browserMessage];
-
-            for (const [id, client] of browserClients) {
-              if (client.readyState === WebSocket.OPEN) {
-                for (const msg of messagesToSend) {
-                  client.send(JSON.stringify(msg));
-                }
-              }
-            }
-          } catch (e) {
-            console.log('⚠️ Non-JSON from CLI, forwarding as text:', line.substring(0, 50));
-            for (const [id, client] of browserClients) {
-              if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({
-                  type: 'content_delta',
-                  delta: { text: line + '\n' },
-                }));
-              }
-            }
-          }
-        }
+          const data = JSON.parse(msg as string);
+          console.log(`📩 WS message:`, data.type);
+        } catch {}
       }
     },
-
-    close(ws, code, message) {
-      const data = ws.data as { type: string; sessionId: string };
-
-      console.log(`🔌 WebSocket disconnected: ${data.type} (${data.sessionId})`);
-
-      if (data.type === 'cli') {
-        cliConnection = null;
-        cliInitialized = false;
-
-        for (const [id, client] of browserClients) {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({
-              type: 'status',
-              status: 'disconnected',
-            }));
-          }
+    close(ws: any) {
+      const { sessionId, type } = ws.data || {};
+      if (type === 'agent') {
+        const bridge = agentBridges.get(sessionId);
+        if (bridge) {
+          bridge.handleCliClose();
         }
+        console.log(`🤖 Agent disconnected: ${sessionId}`);
       } else {
-        browserClients.delete(data.sessionId);
-
-        // Auto-stop CLI when no browsers connected
-        if (browserClients.size === 0) {
-          console.log('📱 No browsers connected - stopping CLI...');
-          setTimeout(() => {
-            if (browserClients.size === 0) {
-              stopCliProcess();
-            }
-          }, 5000);
+        for (const [id, client] of browserClients) {
+          if (client === ws) {
+            browserClients.delete(id);
+            console.log(`👋 Browser disconnected: ${id}`);
+            break;
+          }
         }
       }
-    },
-
-    error(ws, error) {
-      console.error('WebSocket error:', error);
     },
   },
 });
-
-// Helper to safely convert any value to string
-function toString(val: any): string {
-  if (val === null || val === undefined) return '';
-  if (typeof val === 'string') return val;
-  if (typeof val === 'object') {
-    try {
-      return JSON.stringify(val);
-    } catch {
-      return '[Object]';
-    }
-  }
-  return String(val);
-}
-
-function transformCliMessage(data: any): any {
-  // Handle content_delta - pass through
-  if (data.type === 'content_delta') {
-    return data;
-  }
-
-  // Handle assistant messages - convert to content_delta
-  if (data.type === 'assistant' && data.message) {
-    const msg = data.message;
-    if (msg.content && Array.isArray(msg.content)) {
-      // Extract text from content blocks
-      const textParts = msg.content
-        .filter((c: any) => c.type === 'text')
-        .map((c: any) => c.text)
-        .join('');
-
-      if (textParts) {
-        return { type: 'content_delta', delta: { text: textParts } };
-      }
-
-      // Extract tool_use from content blocks
-      const toolUses = msg.content.filter((c: any) => c.type === 'tool_use');
-      if (toolUses.length > 0) {
-        return toolUses.map((tu: any) => ({
-          type: 'tool_call',
-          toolUse: {
-            name: tu.name,
-            input: tu.input,
-            id: tu.id,
-          },
-        }));
-      }
-    }
-  }
-
-  // Handle user messages (tool results)
-  if (data.type === 'user' && data.message) {
-    const msg = data.message;
-    if (msg.content && Array.isArray(msg.content)) {
-      const toolResults = msg.content.filter((c: any) => c.type === 'tool_result');
-      if (toolResults.length > 0) {
-        return toolResults.map((tr: any) => ({
-          type: 'tool_result',
-          toolUseId: tr.tool_use_id,
-          content: tr.content,
-          isError: tr.is_error,
-        }));
-      }
-    }
-  }
-
-  // Handle tool_use messages
-  if (data.type === 'tool_use') {
-    return {
-      type: 'tool_call',
-      toolUse: {
-        name: data.name,
-        input: data.input,
-        id: data.id,
-      },
-      result: data.result,
-      error: data.error,
-    };
-  }
-
-  // Handle status messages
-  if (data.type === 'status') {
-    return {
-      type: 'status',
-      status: data.status,
-    };
-  }
-
-  // Handle control_request - return null (handled directly in message handler)
-  if (data.type === 'control_request') {
-    return null;
-  }
-
-  // Handle system messages - log but don't forward
-  if (data.type === 'system') {
-    return null;
-  }
-
-  // Handle 'done' message - indicates completion of response
-  if (data.type === 'done') {
-    return {
-      type: 'status',
-      status: 'idle',
-    };
-  }
-
-  // Handle 'result' message - command execution complete
-  if (data.type === 'result') {
-    return {
-      type: 'content_delta',
-      delta: {
-        text: '',
-      },
-      _meta: { completed: true },
-    };
-  }
-
-  // Handle subagent_response - skill/subagent output
-  if (data.type === 'subagent_response' || data.type === 'subagent_result') {
-    const text = toString(data.output || data.result || data.content) || JSON.stringify(data);
-    return {
-      type: 'content_delta',
-      delta: { text },
-    };
-  }
-
-  // Handle thinking messages
-  if (data.type === 'thinking' || data.type === 'thought') {
-    return {
-      type: 'content_delta',
-      delta: {
-        text: toString(data.text || data.content),
-      },
-    };
-  }
-
-  // Default: passthrough unknown message types as content_delta
-  // This ensures we don't miss any messages from skills/subagents
-  if (data.text || data.content || data.message || data.output || data.result) {
-    const text = toString(data.text || data.content || data.message || data.output || data.result);
-    return {
-      type: 'content_delta',
-      delta: { text },
-    };
-  }
-
-  // Last resort: return as raw JSON for debugging
-  return {
-    type: 'content_delta',
-    delta: {
-      text: '',
-    },
-    _debug: { unknownType: data.type, raw: data },
-  };
-}
-
-// Helper function to extract tasks from save.json messages
-function extractTasksFromSaveData(saveData: any): any[] {
-  if (!saveData.messages || !Array.isArray(saveData.messages)) {
-    return [];
-  }
-  // Filter messages that are orders (tasks) to the player
-  return saveData.messages
-    .filter((msg: any) => msg.type === 'order' && msg.to === 'Player')
-    .map((msg: any, idx: number) => ({
-      id: `task-${msg.turn}-${idx}`,
-      from: msg.from,
-      content: msg.content,
-      type: msg.type,
-      turn: msg.turn,
-      completed: msg.status === 'completed',
-      action: msg.action,  // Include executable action data
-    }));
-}
-
-// Helper function to broadcast action_started to all browsers
-function broadcastActionStarted(action: any) {
-  console.log('📡 Broadcasting action_started:', action);
-  for (const [id, client] of browserClients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({
-        type: 'action_started',
-        action: action,
-      }));
-    }
-  }
-}
-
-// Helper function to broadcast turn_complete to all browsers
-function broadcastTurnComplete() {
-  console.log('📡 Broadcasting turn_complete');
-  for (const [id, client] of browserClients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({
-        type: 'turn_complete',
-      }));
-    }
-  }
-}
 
 console.log(`
-🎮 Gangs of Claude WebSocket Bridge
+🎮 Gangs of Claude - Territory Control
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📡 WebSocket Server: ws://localhost:3456
-🌐 Web UI:           http://localhost:5174
-
-✓ Auto-starting CLI when browser connects
-✓ Auto-stopping CLI when all browsers disconnect
-
+📡 Server:    http://localhost:3456
+🔌 WebSocket: ws://localhost:3456/ws
+📁 Save file: ${saveJsonPath}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `);
-
-// Keep process running
-process.on('SIGINT', () => {
-  console.log('\n👋 Shutting down server...');
-  stopCliProcess();
-  process.exit(0);
-});

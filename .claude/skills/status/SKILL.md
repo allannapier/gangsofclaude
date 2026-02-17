@@ -1,6 +1,6 @@
 ---
 name: status
-description: Display your current character stats, family standings, recent messages, and current events.
+description: Display your current game state, family standings, territories, and recent events.
 argument-hint:
 user-invocable: true
 allowed-tools: Read, Bash
@@ -9,7 +9,7 @@ disable-model-invocation: false
 
 # Status
 
-Display a comprehensive overview of your current position in the criminal underworld.
+Display current game state from the server.
 
 ## Usage
 
@@ -17,34 +17,20 @@ Display a comprehensive overview of your current position in the criminal underw
 
 ## Process
 
-### Call Status Display Script
-
-Execute the status.sh script to display formatted status:
+Fetch current state from the game server:
 
 ```bash
-bash .claude/scripts/mechanics/status.sh
+curl -s http://localhost:3456/api/state | jq .
 ```
 
-The script will:
-- Display player status (name, rank, family, loyalty, respect, wealth)
-- Show family standings for all 4 families
-- List recent messages (last 5)
-- Show current events
-- Display progress to next rank with requirements
+Display:
+- Current turn number and phase
+- Your family name and wealth
+- All family standings (territories, muscle, wealth, income)
+- Territory ownership summary
+- Recent events (last 10)
+- Any diplomacy messages
 
-## Token Savings
-
-**Before:** ~200 tokens per status call (LLM formatting)
-**After:** ~5 tokens per status call (script output)
-**Savings:** 97%
-
-## Output Format
-
-The script displays formatted ASCII output with sections:
-- Player Status
-- Family Standings
-- Recent Messages
-- Current Events
-- Progress to Next Rank
+The web UI at http://localhost:5174 shows all this visually.
 
 **Note:** This is a read-only operation. No game state changes.

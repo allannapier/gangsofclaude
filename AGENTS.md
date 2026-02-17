@@ -14,9 +14,9 @@
 
 ## What Is This Project?
 
-Gangs of Claude is an immersive text-based mafia game where **22 AI-controlled characters** across **4 rival families** act autonomously each turn. The player starts as an unaffiliated outsider, gets recruited into a family, and climbs the ranks — all while rival families scheme, fight, and negotiate around them.
+Gangs of Claude is an immersive text-based mafia game where **4 LLM-powered family agents** control **4 rival families** that act autonomously each turn. The player starts as an unaffiliated outsider, gets recruited into a family, and climbs the ranks — all while rival families scheme, fight, and negotiate around them.
 
-The game is built entirely on **Claude Code extension features** — skills for player commands, subagents for NPC personalities, and hooks for game-state management — with a companion **React web UI** connected via WebSocket bridge.
+The game is built on **Claude Code extension features** — skills for player commands, LLM-driven family agents for NPC decisions, and hooks for game-state management — with a companion **React web UI** connected via WebSocket bridge. During each turn, the server spawns a Claude CLI process per family using the `--sdk-url` WebSocket protocol, feeding each a rich prompt with full game state and personality context.
 
 ---
 
@@ -33,34 +33,16 @@ la_cosa_nostra/
 │   ├── settings.json                  # Hook configuration (PreToolUse, PostToolUse, SessionStart)
 │   ├── settings.local.json            # Local overrides (not committed)
 │   │
-│   ├── agents/                        # 22 AI character subagents
-│   │   ├── marinelli-vito-don.md
-│   │   ├── marinelli-salvatore-underboss.md
-│   │   ├── marinelli-bruno-consigliere.md
-│   │   ├── marinelli-marco-capo.md
-│   │   ├── marinelli-luca-soldier.md
-│   │   ├── marinelli-enzo-associate.md
-│   │   ├── rossetti-marco-don.md
-│   │   ├── rossetti-carla-underboss.md
-│   │   ├── rossetti-antonio-consigliere.md
-│   │   ├── rossetti-franco-capo.md
-│   │   ├── rossetti-maria-soldier.md
-│   │   ├── rossetti-paolo-associate.md
-│   │   ├── falcone-sofia-don.md
-│   │   ├── falcone-victor-underboss.md
-│   │   ├── falcone-dante-consigliere.md
-│   │   ├── falcone-iris-capo.md
-│   │   ├── falcone-leo-soldier.md
-│   │   ├── moretti-antonio-don.md
-│   │   ├── moretti-giovanni-underboss.md
-│   │   ├── moretti-elena-consigliere.md
-│   │   ├── moretti-ricardo-capo.md
-│   │   └── moretti-carlo-soldier.md
+│   ├── agents/                        # 4 LLM-powered family agents
+│   │   ├── marinelli-family.md
+│   │   ├── rossetti-family.md
+│   │   ├── falcone-family.md
+│   │   └── moretti-family.md
 │   │
 │   ├── skills/                        # Player slash commands
 │   │   ├── start-game/SKILL.md        # Initialize a new game
 │   │   ├── status/SKILL.md            # Display player stats & game state
-│   │   ├── next-turn/SKILL.md         # Advance turn — all 22 AIs act
+│   │   ├── next-turn/SKILL.md         # Advance turn — all 4 family AIs act
 │   │   ├── seek-patronage/SKILL.md    # Get recruited by a family
 │   │   ├── attack/SKILL.md            # Violent actions (assassinate, beatdown, etc.)
 │   │   ├── recruit/SKILL.md           # Build network / mentor others
@@ -98,6 +80,8 @@ la_cosa_nostra/
 │   │   ├── index.ts                   # Bun/Hono WebSocket bridge server
 │   │   ├── protocol.ts                # NDJSON protocol handling
 │   │   ├── mechanics.ts               # Server-side game mechanics
+│   │   ├── claude-bridge.ts           # Claude CLI WebSocket bridge for LLM-driven AI
+│   │   ├── ai-prompts.ts             # Prompt builder for family agents
 │   │   └── dev.ts                     # Dev server entry
 │   └── client/
 │       └── src/
@@ -135,94 +119,97 @@ la_cosa_nostra/
           │                               │
           ▼                               ▼
 ┌──────────────────────────────────────────────────────────┐
-│                   CLAUDE CODE ENGINE                      │
+│                   GAME ENGINE LAYER                       │
 │                                                          │
 │  ┌──────────┐  ┌──────────────┐  ┌────────────────────┐ │
-│  │  Skills   │  │   Hooks      │  │   Subagents (22)   │ │
-│  │ /attack   │  │ PreToolUse   │  │ marinelli-vito-don │ │
-│  │ /recruit  │  │ PostToolUse  │  │ falcone-sofia-don  │ │
-│  │ /next-turn│  │ SessionStart │  │ rossetti-marco-don │ │
-│  │ ...       │  │              │  │ moretti-antonio-don│ │
-│  └─────┬────┘  └──────┬───────┘  │ ... 18 more        │ │
-│        │               │          └─────────┬──────────┘ │
-│        │               │                    │            │
-│        ▼               ▼                    ▼            │
-│  ┌──────────────────────────────────────────────────────┐│
-│  │            .claude/game-state/save.json               ││
-│  │            (Single Source of Truth)                    ││
-│  └──────────────────────────────────────────────────────┘│
+│  │  Skills   │  │   Hooks      │  │  Claude CLI Bridge │ │
+│  │ /attack   │  │ PreToolUse   │  │  (--sdk-url WS)    │ │
+│  │ /recruit  │  │ PostToolUse  │  │                    │ │
+│  │ /next-turn│  │ SessionStart │  │  ┌──────────────┐  │ │
+│  │ ...       │  │              │  │  │ Family Agents │  │ │
+│  └─────┬────┘  └──────┬───────┘  │  │ (4 LLM calls)│  │ │
+│        │               │          │  └──────┬───────┘  │ │
+│        │               │          └─────────┤          │ │
+│        │               │                    │          │ │
+│        ▼               ▼                    ▼          │ │
+│  ┌──────────────────────────────────────────────────┐  │ │
+│  │          .claude/game-state/save.json             │  │ │
+│  │          (Single Source of Truth)                  │  │ │
+│  └──────────────────────────────────────────────────┘  │ │
+│                                                          │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │  ai-prompts.ts → builds rich prompt per family    │    │
+│  │  claude-bridge.ts → spawns Claude CLI process     │    │
+│  │  mechanics.ts → executes returned JSON actions    │    │
+│  └──────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Agent System — The 22 AI Characters
+## Agent System — LLM-Driven Family AI
 
-Each character is a **Claude Code subagent** defined in `.claude/agents/<family>-<name>-<rank>.md`. Every agent has a unique personality, goals, and decision-making style that drives autonomous behavior during turn processing.
+Each of the 4 rival families is controlled by a **single LLM-powered agent** defined in `.claude/agents/<family>-family.md`. Rather than 22 individual character subagents, the game uses 4 family-level agents that encapsulate the entire personality, strategy, and decision-making style of each family.
 
-### Agent Configuration Pattern
+### How It Works
 
-All agents share a common frontmatter structure:
+1. **Agent definition files** (`.claude/agents/<family>-family.md`) define personality, goals, and decision-making style for each family
+2. **During `/next-turn`**, the server spawns a Claude CLI process per family using the `--sdk-url` WebSocket protocol
+3. **`ai-prompts.ts`** builds a rich prompt for each family containing:
+   - Full game state (territories, wealth, members, events)
+   - Family personality and strategic tendencies
+   - Available actions and their mechanics
+   - Recent events and diplomatic context
+4. **The LLM responds** with a structured JSON action:
+   ```json
+   {
+     "action": "expand",
+     "target": "Little Italy",
+     "reasoning": "Consolidating our northern holdings before the Falcones move in",
+     "diplomacy": { "to": "Moretti", "message": "We respect your southern border" },
+     "taunt": "The Falcones will learn that these streets belong to us"
+   }
+   ```
+5. **`mechanics.ts` executes** the returned action — the LLM only decides _what_ to do, not _how_
+6. **Fallback:** If the Claude CLI is unavailable, the system falls back to mechanical AI (weighted random actions based on family personality)
 
-```yaml
----
-name: <family>-<name>-<rank>
-description: "Use proactively for <family> Family <purpose>. <Character summary>."
-tools: Read, Write, Grep, Glob, Bash, Edit
-model: opus                    # Dons use opus; others may use sonnet/haiku
-permissionMode: default
-maxTurns: 50
-memory: project                # Persistent memory in .claude/agent-memory/
----
-```
-
-### Family Roster
+### The 4 Families
 
 #### 🔴 Marinelli Family — _Aggressive Traditionalists_
-| Character | Rank | Archetype | Agent File |
-|-----------|------|-----------|------------|
-| Vito Marinelli | **Don** | Aggressive patriarch, old-school values | `marinelli-vito-don.md` |
-| Salvatore Marinelli | Underboss | Vito's loyal brother, enforcer | `marinelli-salvatore-underboss.md` |
-| Bruno Marinelli | Consigliere | Cautious advisor, voice of reason | `marinelli-bruno-consigliere.md` |
-| Marco Marinelli | Capo | Hot-headed captain, hungry for power | `marinelli-marco-capo.md` |
-| Luca Marinelli | Soldier | Young, desperate to prove himself | `marinelli-luca-soldier.md` |
-| Enzo Marinelli | Associate | Street recruiter, charm and smarts | `marinelli-enzo-associate.md` |
 
-#### 🔵 Rossetti Family — _Business Diplomats_
-| Character | Rank | Archetype | Agent File |
-|-----------|------|-----------|------------|
-| Marco Rossetti | **Don** | Business-minded, diplomatic, wealth-focused | `rossetti-marco-don.md` |
-| Carla Rossetti | Underboss | Marco's sister, strategic and ruthless | `rossetti-carla-underboss.md` |
-| Antonio Rossetti | Consigliere | Lawyer type, cautious, by-the-book | `rossetti-antonio-consigliere.md` |
-| Franco Rossetti | Capo | Corrupt police connections, manipulative | `rossetti-franco-capo.md` |
-| Maria Rossetti | Soldier | Skilled assassin, cold, professional | `rossetti-maria-soldier.md` |
-| Paolo Rossetti | Associate | Gambling ring runner, risk-taker | `rossetti-paolo-associate.md` |
+- **Agent file:** `marinelli-family.md`
+- **Strategy:** Attack-first, respect through power
+- **Personality:** Old-school values, violent enforcement, territorial expansion by force
+- **Tendencies:** Prioritize attack and territory actions, respond aggressively to perceived slights, value loyalty above all
+
+#### 🟡 Rossetti Family — _Business Diplomats_
+
+- **Agent file:** `rossetti-family.md`
+- **Strategy:** Wealth accumulation, strategic partnerships
+- **Personality:** Business-minded, diplomatic, calculating
+- **Tendencies:** Prioritize expand and recruit actions, form alliances, avoid conflict unless profitable
 
 #### 🟣 Falcone Family — _Cunning Manipulators_
-| Character | Rank | Archetype | Agent File |
-|-----------|------|-----------|------------|
-| Sofia Falcone | **Don** | Cunning widow, plays the long game | `falcone-sofia-don.md` |
-| Victor Falcone | Underboss | Calculating, ambitious, ruthlessly efficient | `falcone-victor-underboss.md` |
-| Dante Falcone | Consigliere | Information broker, paranoid, connected | `falcone-dante-consigliere.md` |
-| Iris Falcone | Capo | Blackmail specialist, charming, dangerous | `falcone-iris-capo.md` |
-| Leo Falcone | Soldier | Family spy, stealthy, observant | `falcone-leo-soldier.md` |
+
+- **Agent file:** `falcone-family.md`
+- **Strategy:** Exploitation, diplomacy, information warfare
+- **Personality:** Cunning, patient, plays the long game
+- **Tendencies:** Prioritize intel and diplomacy actions, blackmail rivals, manipulate alliances
 
 #### 🟢 Moretti Family — _Honorable Traditionalists_
-| Character | Rank | Archetype | Agent File |
-|-----------|------|-----------|------------|
-| Antonio Moretti | **Don** | Traditional, respects omertà | `moretti-antonio-don.md` |
-| Giovanni Moretti | Underboss | Antonio's cousin, most trusted lieutenant | `moretti-giovanni-underboss.md` |
-| Elena Moretti | Consigliere | Wise voice of reason, legitimate-world ties | `moretti-elena-consigliere.md` |
-| Ricardo Moretti | Capo | Manages restaurant empire, balances legal/illegal | `moretti-ricardo-capo.md` |
-| Carlo Moretti | Soldier | Don's son, dedicated enforcer | `moretti-carlo-soldier.md` |
+
+- **Agent file:** `moretti-family.md`
+- **Strategy:** Defensive buildup, measured expansion
+- **Personality:** Traditional, respects omertà, honorable but firm
+- **Tendencies:** Prioritize defend and expand actions, avoid unnecessary conflict, build from a position of strength
 
 ### Agent Invocation
 
 Agents are invoked in two ways:
 
-1. **During `/next-turn`** — The turn engine spawns each agent in rank order (Associates → Soldiers → Capos → Consiglieres → Underbosses → Dons). Each agent reads the current game state, decides its action, and writes results back to `save.json`.
+1. **During `/next-turn`** — The server processes families sequentially. For each family, `claude-bridge.ts` spawns a Claude CLI process, sends the prompt built by `ai-prompts.ts`, receives a JSON action, and `mechanics.ts` applies it to `save.json`.
 
-2. **Proactively by Claude** — When the player interacts with a family (e.g., `/seek-patronage enzo_marinelli`), Claude delegates to the appropriate agent to roleplay the NPC response.
+2. **Proactively by Claude** — When the player interacts with a family (e.g., `/seek-patronage`), Claude uses the family's agent definition to roleplay the NPC response in character.
 
 ---
 
@@ -234,7 +221,7 @@ Skills are defined in `.claude/skills/<name>/SKILL.md` and exposed as `/slash-co
 |-------|-------------|----------|
 | `/start-game` | Initialize a new game with ASCII title screen | Core |
 | `/status` | Display player stats, family standings, messages | Core |
-| `/next-turn` | Advance turn — all 22 AI characters act in rank order | Core |
+| `/next-turn` | Advance turn — all 4 family AIs act sequentially | Core |
 | `/promote` | Check qualifications and attempt rank advancement | Core |
 | `/seek-patronage [character]` | Get recruited by a family (Outsider only) | Social |
 | `/message [recipient] [content]` | Send messages to any character | Social |
@@ -252,7 +239,7 @@ Hooks are configured in `.claude/settings.json` and fire at specific lifecycle p
 
 | Hook | Event | Purpose |
 |------|-------|---------|
-| Turn Increment | `PreToolUse` (Skill: next-turn) | Auto-increments turn counter in `save.json` before any AI characters act. Prevents turn desync. |
+| Turn Increment | `PreToolUse` (Skill: next-turn) | Auto-increments turn counter in `save.json` before any family AIs act. Prevents turn desync. |
 | Auto-Backup | `PostToolUse` (Edit/Write) | Copies `save.json` → `save.backup.json` after any state mutation. |
 | Session Resume | `SessionStart` (startup/resume) | Checks for saved game and informs player of status or prompts `/start-game`. |
 
@@ -263,7 +250,7 @@ The `increment-turn.sh` hook runs **before** the `/next-turn` skill executes. Th
 ```
 Player: /next-turn
   → PreToolUse hook fires → increment-turn.sh bumps turn counter
-  → next-turn skill runs → 22 agents act using the correct turn number
+  → next-turn skill runs → 4 family AIs act using the correct turn number
   → PostToolUse hook fires → save.json backed up
 ```
 
@@ -349,6 +336,8 @@ Bun/Hono Server → broadcasts changes to browser
 | `web/server/index.ts` | WebSocket bridge between browser and Claude CLI |
 | `web/server/protocol.ts` | NDJSON protocol serialization |
 | `web/server/mechanics.ts` | Server-side game mechanics |
+| `web/server/claude-bridge.ts` | Claude CLI WebSocket bridge for LLM-driven AI |
+| `web/server/ai-prompts.ts` | Prompt builder for family agents |
 | `web/client/src/App.tsx` | Root application component |
 | `web/client/src/store/` | Zustand game state management |
 | `web/client/src/components/TurnProcessingModal.tsx` | Real-time turn visualization |
@@ -370,17 +359,15 @@ Each turn follows this sequence:
 
 1. **Player invokes `/next-turn`** (via CLI or Web UI)
 2. **PreToolUse hook** fires `increment-turn.sh` → bumps turn counter in `save.json`
-3. **Turn skill** reads `save.json`, invokes game engine
-4. **22 agents process in rank order:**
-   - Associates act first (lowest stakes decisions)
-   - Soldiers act (enforcement, small operations)
-   - Capos act (territory management, crew orders)
-   - Consiglieres act (advice, political maneuvering)
-   - Underbosses act (operational decisions)
-   - Dons act last (strategic moves, war declarations)
-5. **Each agent** reads state → decides action → writes result to `save.json` events
-6. **Web UI** polls `save.json` every 500ms → displays actions in real-time modal
-7. **PostToolUse hook** backs up `save.json`
+3. **Turn skill** reads `save.json`, invokes the turn engine
+4. **4 family agents process sequentially:**
+   - For each family, `claude-bridge.ts` spawns a Claude CLI process via `--sdk-url` WebSocket
+   - `ai-prompts.ts` builds a rich prompt with game state, family personality, and available actions
+   - The LLM returns a structured JSON action (action, target, reasoning, diplomacy, taunt)
+   - `mechanics.ts` validates and executes the action, updating `save.json`
+   - If Claude CLI is unavailable, falls back to mechanical AI (weighted random based on family personality)
+5. **Web UI** polls `save.json` every 500ms → displays actions in real-time modal
+6. **PostToolUse hook** backs up `save.json`
 
 ---
 
@@ -426,11 +413,11 @@ Don (family head)
 ### New Agent
 
 ```bash
-# Create agent file
-cat > .claude/agents/<family>-<name>-<rank>.md << 'EOF'
+# Create family agent file
+cat > .claude/agents/<family>-family.md << 'EOF'
 ---
-name: <family>-<name>-<rank>
-description: "Use proactively for <Family> Family <purpose>. <One-line personality>."
+name: <family>-family
+description: "LLM-powered agent for the <Family> Family. <One-line personality>."
 tools: Read, Write, Grep, Glob, Bash, Edit
 model: sonnet
 permissionMode: default
@@ -438,11 +425,12 @@ maxTurns: 50
 memory: project
 ---
 
-# <Name> <Surname> - <Rank> of the <Family> Family
+# The <Family> Family
 
 **Identity:** ...
+**Strategy:** ...
 **Personality:** ...
-**Goals:** ...
+**Tendencies:** ...
 **Decision-making style:** ...
 EOF
 ```

@@ -1,16 +1,5 @@
 {
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Skill",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "if echo \"$HOOK_TOOL_INPUT\" | jq -e '.skill == \"next-turn\"' > /dev/null 2>&1; then ./.claude/hooks/increment-turn.sh; fi"
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
@@ -28,7 +17,7 @@
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "Check if a saved game exists at .claude/game-state/save.json. If it exists and has a player name set, inform the user that their saved game is ready. If the file doesn't exist or player name is empty, inform the user they can start a new game with /start-game."
+            "prompt": "Check if the game server is running at http://localhost:3456/api/health. If it is, inform the user they can play at http://localhost:5174. If not, suggest running 'cd web && bun run server/index.ts' to start the server, then 'cd web/client && bun run dev' for the UI."
           }
         ]
       }

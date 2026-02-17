@@ -1,99 +1,42 @@
 ---
 name: start-game
-description: Initialize a new game of La Cosa Nostra. Displays the title screen ASCII art, resets game state, and shows the intro narrative.
+description: Initialize a new game of Gangs of Claude. Displays the title screen and directs the player to the web UI to choose a family.
 argument-hint: 
 user-invocable: true
-allowed-tools: Read, Write, Edit
+allowed-tools: Read, Write, Edit, Bash
 disable-model-invocation: false
 ---
 
 # Start New Game
 
-You are the game master for La Cosa Nostra, a text-based mafia strategy game.
+You are the game master for Gangs of Claude, a territory-control strategy game.
 
 ## When Invoked
 
-1. Display the ASCII art from `templates/startup.txt`
-2. Reset the game state in `.claude/game-state/save.json` to initial values
-3. Display the intro narrative
+1. Reset the game by calling `curl -s -X POST http://localhost:3456/api/reset`
+2. Display the welcome message
 
-## Intro Narrative
-
-Display this narrative after the ASCII art:
+## Welcome Message
 
 ---
-**Welcome to La Cosa Nostra**
+**🎮 Gangs of Claude — Territory Control**
 
-The year is 1957. You're a nobody on the streets of New York City - a hustler, a grinder, someone who's tired of watching from the sidelines while the families run this city.
+Four crime families battle for control of 16 territories. Choose your family and dominate the city.
 
-Four powerful families control everything:
-- **Marinelli Family** - Aggressive traditionalists who value strength above all
-- **Rossetti Family** - Business-minded operators who prefer profit over war
-- **Falcone Family** - Cunning manipulators who play the long game
-- **Moretti Family** - Honorable traditionalists who respect the old ways
+**Families:**
+- 🔴 **Marinelli** — Blood & Iron. Aggressive, prioritizes attacks and expansion.
+- 🟡 **Rossetti** — Money Talks. Business-focused, prioritizes upgrades and wealth.
+- 🟣 **Falcone** — Silent Knives. Cunning, exploits weakness with balanced strategy.
+- 🟢 **Moretti** — Honor Bound. Defensive, builds strength, retaliates when attacked.
 
-An uneasy peace exists between them. Tensions are rising. And you? You see opportunity.
+**How to Play:**
+- Each turn you get **1 action**: Hire muscle, Attack, Upgrade, Move, or send a Message
+- AI families act based on their personality each turn
+- Territories generate income; muscle costs upkeep
+- **Win** by controlling all 16 territories
 
-To rise from the streets to Don, you'll need to:
-1. Get noticed by the right people
-2. Earn your way into a family as an Associate
-3. Prove yourself to become a Made Man (Soldier)
-4. Build respect and loyalty to rise through the ranks
-5. Eliminate rival families to secure your legacy
+**Open the web UI at http://localhost:5174 to play!**
 
-Use `/seek-patronage [character]` to approach low-ranking members and get noticed.
-Use `/status` to view your current position in the criminal underworld.
-
-The Commission is watching. The families are watching. Every choice matters.
+Use `/status` to check game state. Use `/next-turn` to advance turns.
 
 ---
-
-## Game State Reset
-
-Create/overwrite `.claude/game-state/save.json` with initial state:
-
-```json
-{
-  "turn": 0,
-  "phase": "playing",
-  "player": {
-    "name": "Player",
-    "rank": "Outsider",
-    "family": null,
-    "loyalty": 50,
-    "respect": 0,
-    "wealth": 50,
-    "contacts": [],
-    "enemies": []
-  },
-  "families": {
-    "Marinelli": { "territory": 25, "soldiers": 3, "wealth": 5000, "standing": "Strong" },
-    "Rossetti": { "territory": 25, "soldiers": 3, "wealth": 6000, "standing": "Strong" },
-    "Falcone": { "territory": 25, "soldiers": 3, "wealth": 5500, "standing": "Strong" },
-    "Moretti": { "territory": 25, "soldiers": 3, "wealth": 5200, "standing": "Strong" }
-  },
-  "territoryOwnership": {
-    "Little Italy": "marinelli",
-    "North End": "rossetti",
-    "The Docks": "",
-    "Fishmarket": "rossetti",
-    "Warehouse District": "marinelli",
-    "East Harbor": "",
-    "Southside Clubs": "rossetti",
-    "Downtown": "falcone",
-    "Financial District": "falcone",
-    "East Side": "moretti",
-    "Harbor": "moretti",
-    "Old Town": "moretti"
-  },
-  "events": [],
-  "messages": [],
-  "deceased": []
-}
-```
-
-**IMPORTANT:** The `events` array must be initialized as an empty array `[]`. This is where all character actions will be logged during turns. The `deceased` array tracks eliminated character IDs and must be reset to `[]` on new game.
-
-## Next Steps
-
-Inform the player they should use `/seek-patronage` to approach an Associate, Soldier, or Capo from any family to begin their journey.
