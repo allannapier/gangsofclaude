@@ -122,7 +122,7 @@ function HireForm({ myTerritories }: { myTerritories: any[] }) {
         <select value={territoryId} onChange={(e) => setTerritoryId(e.target.value)} className="flex-1 bg-zinc-800 rounded px-2 py-1 text-sm border border-zinc-700">
           {myTerritories.map((t) => <option key={t.id} value={t.id}>{t.name} (M{t.muscle})</option>)}
         </select>
-        <input type="number" min={1} max={10} value={count} onChange={(e) => setCount(+e.target.value)} className="w-16 bg-zinc-800 rounded px-2 py-1 text-sm border border-zinc-700" />
+        <input type="text" inputMode="numeric" pattern="[0-9]*" min={1} max={10} value={count} onChange={(e) => { const v = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10); setCount(Math.max(1, Math.min(isNaN(v) ? 1 : v, 10))); }} className="w-16 bg-zinc-800 rounded px-2 py-1 text-sm border border-zinc-700 text-center" />
       </div>
       <button
         onClick={async () => { await performAction('hire', { count, territoryId }); setSelectedAction(null); }}
@@ -160,12 +160,17 @@ function AttackForm({ myTerritories, enemyTerritories }: { myTerritories: any[];
         <div key={t.id} className="flex items-center gap-2 text-sm">
           <span className="flex-1 truncate">{t.name} (M{t.muscle})</span>
           <input
-            type="number"
-            min={0}
-            max={t.muscle}
-            value={muscleAmounts[t.id] || 0}
-            onChange={(e) => setMuscleAmounts({ ...muscleAmounts, [t.id]: Math.min(+e.target.value, t.muscle) })}
-            className="w-16 bg-zinc-800 rounded px-2 py-1 text-sm border border-zinc-700"
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={muscleAmounts[t.id] ?? ''}
+            placeholder="0"
+            onChange={(e) => {
+              const raw = e.target.value.replace(/[^0-9]/g, '');
+              if (raw === '') { setMuscleAmounts({ ...muscleAmounts, [t.id]: 0 }); return; }
+              setMuscleAmounts({ ...muscleAmounts, [t.id]: Math.min(parseInt(raw, 10), t.muscle) });
+            }}
+            className="w-16 bg-zinc-800 rounded px-2 py-1 text-sm border border-zinc-700 text-center"
           />
         </div>
       ))}
@@ -236,7 +241,7 @@ function MoveForm({ myTerritories }: { myTerritories: any[] }) {
         </div>
         <div className="w-20">
           <label className="text-xs text-zinc-500">Amount:</label>
-          <input type="number" min={1} max={fromTerritory?.muscle || 1} value={amount} onChange={(e) => setAmount(+e.target.value)} className="w-full bg-zinc-800 rounded px-2 py-1 text-sm border border-zinc-700" />
+          <input type="text" inputMode="numeric" pattern="[0-9]*" value={amount} onChange={(e) => { const v = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10); setAmount(Math.max(1, Math.min(isNaN(v) ? 1 : v, fromTerritory?.muscle || 1))); }} className="w-full bg-zinc-800 rounded px-2 py-1 text-sm border border-zinc-700 text-center" />
         </div>
       </div>
       <button

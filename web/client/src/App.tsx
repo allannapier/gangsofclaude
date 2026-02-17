@@ -7,7 +7,7 @@ import { FAMILY_COLORS } from './types';
 export default function App() {
   const { connect, state, connected } = useGameStore();
 
-  useEffect(() => { connect(); }, [connect]);
+  useEffect(() => { connect(); return () => { /* cleanup handled by StrictMode guard in connect() */ }; }, [connect]);
 
   const playerColor = state.playerFamily ? FAMILY_COLORS[state.playerFamily] : '#888';
 

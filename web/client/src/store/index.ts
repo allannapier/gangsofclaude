@@ -54,10 +54,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
   showTurnModal: false,
 
   connect: () => {
+    // Guard against duplicate connections (React StrictMode calls effects twice)
+    const existing = get().ws;
+    if (existing && existing.readyState !== WebSocket.CLOSED) {
+      return;
+    }
     const ws = new WebSocket(WS_URL);
+    // Store immediately to prevent duplicate connections from StrictMode
+    set({ ws });
     ws.onopen = () => {
       console.log('[WS] Connected');
-      set({ connected: true, ws });
+      set({ connected: true });
     };
     ws.onmessage = (evt) => {
       try {
