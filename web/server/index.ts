@@ -677,6 +677,28 @@ async function processNextTurn(): Promise<{ events: GameEvent[]; winner: string 
     broadcastEvent(elimEvent);
   }
 
+  // 6. Check if player was eliminated — game over
+  if (gameState.playerFamily && eliminated.includes(gameState.playerFamily)) {
+    // Find the strongest remaining family as the "winner"
+    const activeFamilies = Object.keys(gameState.families).filter(fid => !eliminated.includes(fid));
+    const strongest = activeFamilies.sort((a, b) => {
+      const aTerr = gameState.territories.filter(t => t.owner === a).length;
+      const bTerr = gameState.territories.filter(t => t.owner === b).length;
+      return bTerr - aTerr;
+    })[0] || null;
+    
+    gameState.phase = 'ended';
+    gameState.winner = strongest;
+    const defeatEvent: GameEvent = {
+      turn: gameState.turn,
+      actor: gameState.families[gameState.playerFamily]?.name || gameState.playerFamily,
+      action: 'defeat',
+      details: `Your family has been wiped out! ${strongest ? `The ${gameState.families[strongest]?.name} family dominates the city.` : 'The city falls into chaos.'}`,
+    };
+    turnEvents.push(defeatEvent);
+    broadcastEvent(defeatEvent);
+  }
+
   gameState.events.push(...turnEvents);
   saveState();
   return { events: turnEvents, winner };
