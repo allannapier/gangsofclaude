@@ -464,6 +464,7 @@ function processAIDiplomacy(familyId: string, action: AIAction): GameEvent | nul
     type,
     targetFamily: targetFamily || undefined,
     turn: gameState.turn,
+    status: (type === 'partnership' || type === 'coordinate_attack') ? 'pending' : undefined,
   };
   gameState.diplomacy.push(msg);
 
