@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useGameStore } from '../store';
-import { FAMILY_COLORS, type Territory } from '../types';
+import { FAMILY_COLORS, BUSINESS_DEFINITIONS, type Territory } from '../types';
 import { territoryIncome } from './utils';
 import { MuscleIcon, LevelIcon, ActionIcon, UpgradeIcon, MoveIcon } from './Icons';
 
@@ -28,7 +28,7 @@ export function TerritoryGrid({ onActionSelected }: TerritoryGridProps) {
     if (isOwn) {
       const actions: { action: string; label: string; icon: string; color: string }[] = [
         { action: 'hire', label: 'Hire', icon: 'hire', color: 'bg-blue-600' },
-        { action: 'upgrade', label: 'Upgrade', icon: 'upgrade', color: 'bg-purple-600' },
+        { action: 'business', label: 'Business', icon: 'upgrade', color: 'bg-purple-600' },
       ];
       if (state.territories.filter(tt => tt.owner === state.playerFamily).length >= 2) {
         actions.push({ action: 'move', label: 'Move', icon: 'move', color: 'bg-teal-600' });
@@ -68,8 +68,8 @@ export function TerritoryGrid({ onActionSelected }: TerritoryGridProps) {
               </div>
               <div className="flex items-center justify-between mt-2 text-xs">
                 <span title="Muscle stationed" className="flex items-center gap-0.5"><MuscleIcon size={12} /> {t.muscle}</span>
-                <span title="Territory level" className="flex items-center gap-0.5"><LevelIcon size={12} /> L{t.level}</span>
-                <span title="Income per turn" className="text-green-400">${territoryIncome(t.level)}</span>
+                <span title="Business type" className="flex items-center gap-0.5"><LevelIcon size={12} /> {BUSINESS_DEFINITIONS[t.business].name}</span>
+                <span title="Income per turn" className="text-green-400">${territoryIncome(t.business)}</span>
               </div>
             </button>
           );
@@ -94,8 +94,8 @@ export function TerritoryGrid({ onActionSelected }: TerritoryGridProps) {
             </div>
             <div className="flex items-center gap-4 text-sm text-zinc-400 mb-4">
               <span className="flex items-center gap-1"><MuscleIcon size={14} /> {popupTerritory.muscle} muscle</span>
-              <span className="flex items-center gap-1"><LevelIcon size={14} /> Level {popupTerritory.level}</span>
-              <span className="text-green-400">${territoryIncome(popupTerritory.level)}/turn</span>
+              <span className="flex items-center gap-1"><LevelIcon size={14} /> {BUSINESS_DEFINITIONS[popupTerritory.business].name}</span>
+              <span className="text-green-400">${territoryIncome(popupTerritory.business)}/turn</span>
             </div>
             <div className="flex gap-2">
               {getActions(popupTerritory).map((a) => (

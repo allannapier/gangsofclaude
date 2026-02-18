@@ -3,13 +3,13 @@
  * Each family gets full game context, personality, and available actions.
  */
 
-import type { SaveState, Territory, GameEvent, DiplomacyMessage } from './mechanics';
+import type { SaveState, Territory, GameEvent, DiplomacyMessage, BusinessType } from './mechanics';
 import {
   calculateFamilyIncome,
   calculateUpkeepCost,
   MUSCLE_HIRE_COST,
-  TERRITORY_UPGRADE_COST,
-  MAX_TERRITORY_LEVEL,
+  BUSINESS_DEFINITIONS,
+  canUpgradeBusiness,
   territoryIncome,
 } from './mechanics';
 
@@ -19,18 +19,18 @@ const FAMILY_PERSONALITIES: Record<string, string> = {
 You rule through fear and overwhelming force. You are the oldest family in the city and believe you are the rightful rulers.
 - Attack first, negotiate later. If a rival shows weakness, exploit it immediately.
 - You hold grudges. If someone attacked you, retaliate even if it costs you.
-- Prefer hiring muscle over upgrading. You want raw power.
+- Prefer hiring muscle over upgrading businesses. You want raw power.
 - Declare war readily. Diplomacy is a last resort.
 - When wealthy and strong: launch attacks. When weak: rebuild muscle before striking.
 - Your tone is blunt, threatening, old-school mafia.`,
 
   rossetti: `You are the **Rossetti Family** — Business Diplomats.
 You rule through wealth and influence. Violence is expensive and wasteful — money is the real power.
-- Prioritize upgrading territories for maximum income. Spend money to make money.
+- Prioritize business upgrades for maximum income. Invest in high-tier operations.
 - Prefer diplomacy over violence. Propose partnerships before resorting to force.
 - Only attack when numbers overwhelmingly favor you.
 - Form alliances against aggressors. Coordinate attacks only against the strongest rival.
-- When wealthy: upgrade and dominate economically. When threatened: seek allies.
+- When wealthy: upgrade businesses and dominate economically. When threatened: seek allies.
 - Your tone is polished, business-like, condescending.`,
 
   falcone: `You are the **Falcone Family** — Cunning Manipulators.
@@ -48,13 +48,14 @@ You rule through loyalty and measured strength. You don't start wars — you fin
 - Only attack when attacked first, but hit hard when you do.
 - Honor partnerships. If an ally asks for help, consider it.
 - Patient expansion: claim unclaimed territory when safe, never overextend.
-- Upgrade territories for long-term income stability.
+- Upgrade businesses for long-term income stability.
 - Your tone is dignified, measured, old-world respect.`,
 };
 
 export interface AIAction {
-  action: 'attack' | 'claim' | 'hire' | 'upgrade' | 'wait';
+  action: 'attack' | 'claim' | 'hire' | 'business' | 'wait';
   target?: string; // territory_id
+  business?: BusinessType; // for business action
   reasoning: string;
   diplomacy?: {
     type: 'war' | 'partnership' | 'coordinate_attack';
@@ -92,7 +93,7 @@ export function buildFamilyPrompt(familyId: string, state: SaveState): string {
 
   // Territory details
   const myTerritoryDetails = myTerritories
-    .map(t => `  - ${t.name} (${t.id}): Level ${t.level}, ${t.muscle} muscle, $${territoryIncome(t.level)}/turn`)
+    .map(t => `  - ${t.name} (${t.id}): ${BUSINESS_DEFINITIONS[t.business]?.name || t.business}, ${t.muscle} muscle, $${territoryIncome(t.business)}/turn`)
     .join('\n');
 
   // Enemy territories
@@ -100,7 +101,7 @@ export function buildFamilyPrompt(familyId: string, state: SaveState): string {
     .filter(t => t.owner !== null && t.owner !== familyId)
     .map(t => {
       const ownerName = state.families[t.owner!]?.name || t.owner;
-      return `  - ${t.name} (${t.id}): Owner=${ownerName}, Level ${t.level}, ${t.muscle} muscle`;
+      return `  - ${t.name} (${t.id}): Owner=${ownerName}, ${BUSINESS_DEFINITIONS[t.business]?.name || t.business}, ${t.muscle} muscle`;
     })
     .join('\n');
 
@@ -131,8 +132,22 @@ export function buildFamilyPrompt(familyId: string, state: SaveState): string {
   // Available actions
   const canHire = family.wealth >= MUSCLE_HIRE_COST;
   const hireMax = Math.min(3, Math.floor(family.wealth / MUSCLE_HIRE_COST));
-  const upgradeableTerritories = myTerritories.filter(t => t.level < MAX_TERRITORY_LEVEL);
-  const canUpgrade = family.wealth >= TERRITORY_UPGRADE_COST && upgradeableTerritories.length > 0;
+  
+  // Check which businesses can be upgraded to
+  const businessUpgrades: Array<{ territory: Territory; businesses: BusinessType[] }> = [];
+  for (const t of myTerritories) {
+    const affordable: BusinessType[] = [];
+    for (const biz of ['protection', 'numbers', 'speakeasy', 'brothel', 'casino', 'smuggling'] as BusinessType[]) {
+      if (canUpgradeBusiness(t.business, biz) && family.wealth >= BUSINESS_DEFINITIONS[biz].cost) {
+        affordable.push(biz);
+      }
+    }
+    if (affordable.length > 0) {
+      businessUpgrades.push({ territory: t, businesses: affordable });
+    }
+  }
+  const canUpgradeBusiness_check = businessUpgrades.length > 0;
+  
   const canAttack = totalMuscle >= 3; // need at least some spare muscle
   const canClaim = unclaimed.length > 0 && totalMuscle >= 2;
 
@@ -177,11 +192,14 @@ ${recentDiplomacy}
 ${canAttack ? `**ATTACK** — Send muscle to attack an enemy territory
   - You'll send up to 5 muscle from your strongest territories (leaving 1 behind each)
   - Combat is weighted random: more muscle = higher chance of winning
+  - ⚠️ **DEFENSE BONUS:** Better businesses provide defensive advantage! (Numbers +1, Speakeasy +2, Brothel +3, Casino +5, Smuggling +7)
   - Both sides take casualties (20-50% losses)
+  - 🏴 **If you win:** Territory resets to Protection Racket (damaged in fighting)
   - Pick a target from enemy territories above` : '**ATTACK** — ❌ Not enough muscle (need 3+)'}
 
 ${canClaim ? `**CLAIM** — Claim an unclaimed territory
   - Moves 1 muscle from your strongest territory to the new one
+  - Establishes a Protection Racket (+$100/turn)
   - Free expansion, no combat required
   - Pick from unclaimed territories above` : '**CLAIM** — ❌ ' + (unclaimed.length === 0 ? 'No unclaimed territories left' : 'Not enough muscle (need 2+)')}
 
@@ -189,8 +207,13 @@ ${canHire ? `**HIRE** — Recruit muscle ($${MUSCLE_HIRE_COST} each, max ${hireM
   - Stationed at your weakest territory
   - You can afford up to ${hireMax} muscle ($${hireMax * MUSCLE_HIRE_COST})` : '**HIRE** — ❌ Cannot afford ($' + MUSCLE_HIRE_COST + ' per muscle)'}
 
-${canUpgrade ? `**UPGRADE** — Upgrade a territory to increase income ($${TERRITORY_UPGRADE_COST})
-  - Upgradeable: ${upgradeableTerritories.map(t => `${t.name} (${t.id}) L${t.level}→L${t.level + 1} = $${territoryIncome(t.level)}→$${territoryIncome(t.level + 1)}/turn`).join(', ')}` : '**UPGRADE** — ❌ ' + (upgradeableTerritories.length === 0 ? 'All territories at max level' : 'Cannot afford ($' + TERRITORY_UPGRADE_COST + ')')}
+${canUpgradeBusiness_check ? `**BUSINESS** — Upgrade a territory's business operation
+  - ⚠️ **Higher businesses = harder to attack!** (Provides defense bonus)
+  - But resets to Protection if conquered
+${businessUpgrades.map(({ territory, businesses }) => {
+  return `  - **${territory.name}** (${territory.id}) — Current: ${BUSINESS_DEFINITIONS[territory.business].name} ($${BUSINESS_DEFINITIONS[territory.business].income}/turn)
+    Can upgrade to: ${businesses.map(b => `${BUSINESS_DEFINITIONS[b].name} ($${BUSINESS_DEFINITIONS[b].cost}, +$${BUSINESS_DEFINITIONS[b].income}/turn)`).join(' or ')}`;
+}).join('\n')}` : '**BUSINESS** — ❌ No affordable upgrades'}
 
 **WAIT** — Do nothing this turn (always available)
 
@@ -207,8 +230,9 @@ ${activeFamilyIds.length > 0 ? `Active families you can message: ${activeFamilyI
 You MUST respond with ONLY a valid JSON object, no other text:
 \`\`\`json
 {
-  "action": "attack|claim|hire|upgrade|wait",
+  "action": "attack|claim|hire|business|wait",
   "target": "territory_id_or_null",
+  "business": "protection|numbers|speakeasy|brothel|casino|smuggling (only for business action)",
   "reasoning": "1-2 sentence strategic explanation",
   "diplomacy": {"type": "war|partnership|coordinate_attack", "target": "family_id", "targetFamily": "family_id_only_for_coordinate_attack"} or null,
   "taunt": "short in-character quote for the game log (max 15 words)"
@@ -242,7 +266,7 @@ export function parseAIResponse(raw: string): AIAction | null {
     const parsed = JSON.parse(jsonStr);
 
     // Validate required fields
-    const validActions = ['attack', 'claim', 'hire', 'upgrade', 'wait'];
+    const validActions = ['attack', 'claim', 'hire', 'business', 'wait'];
     if (!validActions.includes(parsed.action)) {
       console.error(`[ai-prompts] Invalid action: ${parsed.action}`);
       return null;
@@ -251,6 +275,7 @@ export function parseAIResponse(raw: string): AIAction | null {
     return {
       action: parsed.action,
       target: parsed.target || undefined,
+      business: parsed.business || undefined,
       reasoning: parsed.reasoning || 'No reasoning provided.',
       diplomacy: parsed.diplomacy || null,
       taunt: parsed.taunt || undefined,

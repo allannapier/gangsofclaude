@@ -23,12 +23,13 @@ export function EventLog() {
             const actionIcons: Record<string, any> = {
               attack: <ActionIcon size={14} />,
               hire: <MuscleIcon size={14} />,
-              upgrade: <UpgradeIcon size={14} />,
+              business: <UpgradeIcon size={14} />,
               move: <MoveIcon size={14} />,
               claim: <ClaimIcon size={14} />,
               income: '💰',
               diplomacy: <MessageIcon size={14} />,
               eliminated: '💀',
+              bounty: '💰',
               victory: '🏆',
               wait: '⏳',
             };

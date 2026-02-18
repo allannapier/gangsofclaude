@@ -2,12 +2,21 @@
  * Simplified game protocol types
  */
 
+export type BusinessType = 
+  | 'none'
+  | 'protection'
+  | 'numbers'
+  | 'speakeasy'
+  | 'brothel'
+  | 'casino'
+  | 'smuggling';
+
 export interface Territory {
   id: string;
   name: string;
   owner: string | null;
   muscle: number;
-  level: number;
+  business: BusinessType;
 }
 
 export interface FamilyState {
@@ -16,6 +25,7 @@ export interface FamilyState {
   wealth: number;
   totalMuscle: number;
   personality: 'aggressive' | 'business' | 'cunning' | 'defensive';
+  lastAttackedBy: string | null;
 }
 
 export interface DiplomacyMessage {
@@ -24,6 +34,8 @@ export interface DiplomacyMessage {
   type: 'partnership' | 'coordinate_attack' | 'war' | 'intel';
   targetFamily?: string;
   turn: number;
+  status?: 'pending' | 'accepted' | 'rejected';
+  respondedTurn?: number;
 }
 
 export interface GameEvent {

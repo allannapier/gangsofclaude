@@ -40,6 +40,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     phase: 'setup',
     playerFamily: null,
     playerActed: false,
+    playerMessaged: false,
     winner: null,
     families: {},
     territories: [],

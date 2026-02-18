@@ -17,13 +17,15 @@ import {
   checkWinCondition,
   getEliminatedFamilies,
   territoryIncome,
+  canUpgradeBusiness,
+  getBusinessDefenseBonus,
   MUSCLE_HIRE_COST,
-  TERRITORY_UPGRADE_COST,
-  MAX_TERRITORY_LEVEL,
+  BUSINESS_DEFINITIONS,
   type SaveState,
   type GameEvent,
   type DiplomacyMessage,
   type Territory,
+  type BusinessType,
 } from './mechanics';
 import { ClaudeAgentBridge } from './claude-bridge';
 import { buildFamilyPrompt, parseAIResponse, type AIAction } from './ai-prompts';
@@ -115,11 +117,26 @@ function aiDecideAction(familyId: string, state: SaveState): GameEvent | null {
       break;
     }
     case 'business': {
-      // Rossetti: prioritize upgrades and hiring
-      const upgradeable = myTerritories.filter(t => t.level < MAX_TERRITORY_LEVEL);
-      if (family.wealth >= TERRITORY_UPGRADE_COST && upgradeable.length > 0 && roll < 0.4) {
-        const target = upgradeable.sort((a, b) => a.level - b.level)[0];
-        return executeAIUpgrade(state, familyId, target);
+      // Rossetti: prioritize business upgrades and hiring
+      const upgradeable = myTerritories.filter(t => {
+        // Check if can upgrade to any business
+        const current = t.business;
+        return ['numbers', 'speakeasy', 'brothel', 'casino', 'smuggling'].some(b => 
+          canUpgradeBusiness(current, b as BusinessType) && family.wealth >= BUSINESS_DEFINITIONS[b as BusinessType].cost
+        );
+      });
+      if (upgradeable.length > 0 && roll < 0.4) {
+        const target = upgradeable[0];
+        // Pick best affordable business
+        const affordable: BusinessType[] = [];
+        for (const biz of ['numbers', 'speakeasy', 'brothel', 'casino', 'smuggling'] as BusinessType[]) {
+          if (canUpgradeBusiness(target.business, biz) && family.wealth >= BUSINESS_DEFINITIONS[biz].cost) {
+            affordable.push(biz);
+          }
+        }
+        if (affordable.length > 0) {
+          return executeAIBusiness(state, familyId, target, affordable[affordable.length - 1]);
+        }
       }
       if (family.wealth >= MUSCLE_HIRE_COST && roll < 0.7) {
         return executeAIHire(state, familyId);
@@ -155,10 +172,24 @@ function aiDecideAction(familyId: string, state: SaveState): GameEvent | null {
       if (family.wealth >= MUSCLE_HIRE_COST && roll < 0.5) {
         return executeAIHire(state, familyId);
       }
-      const upgradeable = myTerritories.filter(t => t.level < MAX_TERRITORY_LEVEL);
-      if (family.wealth >= TERRITORY_UPGRADE_COST && upgradeable.length > 0 && roll < 0.7) {
+      const upgradeable = myTerritories.filter(t => {
+        const current = t.business;
+        return ['numbers', 'speakeasy', 'brothel', 'casino', 'smuggling'].some(b => 
+          canUpgradeBusiness(current, b as BusinessType) && family.wealth >= BUSINESS_DEFINITIONS[b as BusinessType].cost
+        );
+      });
+      if (upgradeable.length > 0 && roll < 0.7) {
         const target = upgradeable[0];
-        return executeAIUpgrade(state, familyId, target);
+        // Pick best affordable business
+        const affordable: BusinessType[] = [];
+        for (const biz of ['numbers', 'speakeasy', 'brothel', 'casino', 'smuggling'] as BusinessType[]) {
+          if (canUpgradeBusiness(target.business, biz) && family.wealth >= BUSINESS_DEFINITIONS[biz].cost) {
+            affordable.push(biz);
+          }
+        }
+        if (affordable.length > 0) {
+          return executeAIBusiness(state, familyId, target, affordable[affordable.length - 1]);
+        }
       }
       if (hasWarDeclaration && totalMuscle >= 5 && enemyTerritories.length > 0) {
         const target = weakEnemyTerritories.length > 0
@@ -200,7 +231,7 @@ function executeAIAttack(state: SaveState, familyId: string, target: Territory):
     return { turn: state.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to attack but has no spare muscle.` };
   }
 
-  const combat = resolveCombat(muscleToSend, target.muscle);
+  const combat = resolveCombat(muscleToSend, target.muscle, target.business);
 
   // Apply losses
   let remainingAttackerLoss = combat.attackerLosses;
@@ -224,8 +255,15 @@ function executeAIAttack(state: SaveState, familyId: string, target: Territory):
     target.owner = familyId;
     const survivingAttackers = muscleToSend - combat.attackerLosses;
     target.muscle += survivingAttackers;
-    // Territory level goes down on conquest
-    target.level = Math.max(1, target.level - 1);
+    
+    // Track last attacker for elimination bounty
+    if (prevOwner) {
+      state.families[prevOwner].lastAttackedBy = familyId;
+    }
+    
+    // Business resets to protection on conquest (territory is damaged)
+    target.business = 'protection';
+    
     return {
       turn: state.turn,
       actor: family.name,
@@ -248,6 +286,7 @@ function executeAIClaim(state: SaveState, familyId: string, unclaimed: Territory
   const family = state.families[familyId];
   const target = unclaimed[Math.floor(Math.random() * unclaimed.length)];
   target.owner = familyId;
+  target.business = 'protection'; // Initialize with basic business
   // Move 1 muscle from strongest territory
   const myTerritories = state.territories.filter(t => t.owner === familyId && t.muscle > 1 && t.id !== target.id);
   if (myTerritories.length > 0) {
@@ -282,15 +321,16 @@ function executeAIHire(state: SaveState, familyId: string): GameEvent {
   };
 }
 
-function executeAIUpgrade(state: SaveState, familyId: string, target: Territory): GameEvent {
+function executeAIBusiness(state: SaveState, familyId: string, target: Territory, businessType: BusinessType): GameEvent {
   const family = state.families[familyId];
-  family.wealth -= TERRITORY_UPGRADE_COST;
-  target.level = Math.min(MAX_TERRITORY_LEVEL, target.level + 1);
+  const businessDef = BUSINESS_DEFINITIONS[businessType];
+  family.wealth -= businessDef.cost;
+  target.business = businessType;
   return {
     turn: state.turn,
     actor: family.name,
-    action: 'upgrade',
-    details: `${family.name} upgraded ${target.name} to level ${target.level} ($${TERRITORY_UPGRADE_COST}).`,
+    action: 'business',
+    details: `${family.name} established ${businessDef.name} at ${target.name} ($${businessDef.cost}). Income: $${businessDef.income}/turn.`,
   };
 }
 
@@ -372,15 +412,29 @@ function executeAIAction(familyId: string, action: AIAction): GameEvent {
       return { ...result, details: `${result.details} ${action.reasoning}${tauntSuffix}` };
     }
 
-    case 'upgrade': {
+    case 'business': {
+      if (!action.business) {
+        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade business but didn't specify which.${tauntSuffix}` };
+      }
       const myTerritories = gameState.territories.filter(t => t.owner === familyId);
       const target = action.target
-        ? myTerritories.find(t => t.id === action.target && t.level < MAX_TERRITORY_LEVEL)
-        : myTerritories.filter(t => t.level < MAX_TERRITORY_LEVEL).sort((a, b) => a.level - b.level)[0];
-      if (!target || family.wealth < TERRITORY_UPGRADE_COST) {
-        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade but couldn't.${tauntSuffix}` };
+        ? myTerritories.find(t => t.id === action.target)
+        : myTerritories[0]; // default to first territory
+      
+      if (!target) {
+        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade business but had no valid territory.${tauntSuffix}` };
       }
-      const result = executeAIUpgrade(gameState, familyId, target);
+      
+      const businessDef = BUSINESS_DEFINITIONS[action.business];
+      if (!canUpgradeBusiness(target.business, action.business)) {
+        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade ${target.name} to ${businessDef.name} but can't upgrade from ${BUSINESS_DEFINITIONS[target.business].name}.${tauntSuffix}` };
+      }
+      
+      if (family.wealth < businessDef.cost) {
+        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade business but couldn't afford it.${tauntSuffix}` };
+      }
+      
+      const result = executeAIBusiness(gameState, familyId, target, action.business);
       return { ...result, details: `${result.details} ${action.reasoning}${tauntSuffix}` };
     }
 
@@ -439,11 +493,13 @@ async function processAITurnsLLM(broadcastEvent: (event: GameEvent) => void): Pr
 
   try {
     // Create and spawn the bridge
+    console.log('[next-turn] Creating Claude bridge...');
     bridge = new ClaudeAgentBridge({ port: 3456 });
     agentBridges.set(bridge.id, bridge);
 
+    console.log('[next-turn] Spawning Claude CLI...');
     await bridge.spawn();
-    console.log(`[next-turn] Claude bridge connected, processing ${aiFamilies.length} families`);
+    console.log(`[next-turn] ✅ Claude bridge connected, processing ${aiFamilies.length} families`);
 
     // Process each family sequentially
     for (const familyId of aiFamilies) {
@@ -503,7 +559,9 @@ async function processAITurnsLLM(broadcastEvent: (event: GameEvent) => void): Pr
       }
     }
   } catch (e) {
-    console.error('[next-turn] Bridge failed, falling back to mechanical AI:', e);
+    console.error('[next-turn] ❌ Bridge failed, falling back to mechanical AI:', e);
+    console.error('[next-turn] Error details:', e instanceof Error ? e.message : String(e));
+    console.error('[next-turn] Stack:', e instanceof Error ? e.stack : 'N/A');
     // Full fallback — use mechanical AI for all families
     for (const familyId of aiFamilies) {
       const eliminated = getEliminatedFamilies(gameState);
@@ -573,15 +631,34 @@ async function processNextTurn(): Promise<{ events: GameEvent[]; winner: string 
     broadcastEvent(winEvent);
   }
 
-  // 5. Check eliminations
+  // 5. Check eliminations and transfer wealth
   const eliminated = getEliminatedFamilies(gameState);
   for (const fid of eliminated) {
+    const eliminatedFamily = gameState.families[fid];
     const elimEvent: GameEvent = {
       turn: gameState.turn,
-      actor: gameState.families[fid]?.name || fid,
+      actor: eliminatedFamily?.name || fid,
       action: 'eliminated',
-      details: `${gameState.families[fid]?.name || fid} has been eliminated!`,
+      details: `${eliminatedFamily?.name || fid} has been eliminated!`,
     };
+    
+    // Transfer wealth to last attacker
+    if (eliminatedFamily?.lastAttackedBy && eliminatedFamily.wealth > 0) {
+      const victor = gameState.families[eliminatedFamily.lastAttackedBy];
+      if (victor) {
+        victor.wealth += eliminatedFamily.wealth;
+        const bountyEvent: GameEvent = {
+          turn: gameState.turn,
+          actor: victor.name,
+          action: 'bounty',
+          details: `${victor.name} seized $${eliminatedFamily.wealth} from the eliminated ${eliminatedFamily.name} family!`,
+        };
+        turnEvents.push(bountyEvent);
+        broadcastEvent(bountyEvent);
+        eliminatedFamily.wealth = 0;
+      }
+    }
+    
     turnEvents.push(elimEvent);
     broadcastEvent(elimEvent);
   }
@@ -613,7 +690,7 @@ function playerHireMuscle(count: number, territoryId: string): ActionResult {
     details: `Hired ${count} muscle for $${cost}, stationed at ${territory.name}.`,
   };
   gameState.events.push(event);
-  saveState();
+  // Don't save here - let the action handler save after setting playerActed
   return { success: true, message: event.details, events: [event] };
 }
 
@@ -638,7 +715,7 @@ function playerAttack(fromTerritoryIds: string[], targetTerritoryId: string, mus
 
   if (totalMuscle <= 0) return { success: false, message: 'Must send at least 1 muscle.', events: [] };
 
-  const combat = resolveCombat(totalMuscle, target.muscle);
+  const combat = resolveCombat(totalMuscle, target.muscle, target.business);
 
   // Remove sent muscle from source territories
   for (const src of sources) {
@@ -654,7 +731,15 @@ function playerAttack(fromTerritoryIds: string[], targetTerritoryId: string, mus
     target.owner = gameState.playerFamily!;
     const surviving = totalMuscle - combat.attackerLosses;
     target.muscle += surviving;
-    target.level = Math.max(1, target.level - 1);
+    
+    // Track last attacker for elimination bounty
+    if (prevOwner) {
+      gameState.families[prevOwner].lastAttackedBy = gameState.playerFamily!;
+    }
+    
+    // Business resets to protection on conquest (territory is damaged)
+    target.business = 'protection';
+    
     const event: GameEvent = {
       turn: gameState.turn,
       actor: family.name,
@@ -695,27 +780,36 @@ function playerAttack(fromTerritoryIds: string[], targetTerritoryId: string, mus
   }
 
   gameState.events.push(...events);
-  saveState();
+  // Don't save here - let the action handler save after setting playerActed
   return { success: true, message: events[0].result || events[0].details, events };
 }
 
-function playerUpgrade(territoryId: string): ActionResult {
+function playerBusiness(territoryId: string, businessType: BusinessType): ActionResult {
   const family = gameState.families[gameState.playerFamily!];
   const territory = gameState.territories.find(t => t.id === territoryId && t.owner === gameState.playerFamily);
   if (!territory) return { success: false, message: 'You do not own that territory.', events: [] };
-  if (territory.level >= MAX_TERRITORY_LEVEL) return { success: false, message: `${territory.name} is already max level.`, events: [] };
-  if (family.wealth < TERRITORY_UPGRADE_COST) return { success: false, message: `Not enough wealth. Need $${TERRITORY_UPGRADE_COST}, have $${family.wealth}.`, events: [] };
+  
+  const businessDef = BUSINESS_DEFINITIONS[businessType];
+  
+  // Validate upgrade path
+  if (!canUpgradeBusiness(territory.business, businessType)) {
+    return { success: false, message: `Cannot upgrade from ${BUSINESS_DEFINITIONS[territory.business].name} to ${businessDef.name}.`, events: [] };
+  }
+  
+  if (family.wealth < businessDef.cost) {
+    return { success: false, message: `Not enough wealth. Need $${businessDef.cost}, have $${family.wealth}.`, events: [] };
+  }
 
-  family.wealth -= TERRITORY_UPGRADE_COST;
-  territory.level++;
+  family.wealth -= businessDef.cost;
+  territory.business = businessType;
   const event: GameEvent = {
     turn: gameState.turn,
     actor: family.name,
-    action: 'upgrade',
-    details: `Upgraded ${territory.name} to level ${territory.level} ($${TERRITORY_UPGRADE_COST}). Income: $${territoryIncome(territory.level)}/turn.`,
+    action: 'business',
+    details: `Established ${businessDef.name} at ${territory.name} ($${businessDef.cost}). Income: $${businessDef.income}/turn.`,
   };
   gameState.events.push(event);
-  saveState();
+  // Don't save here - let the action handler save after setting playerActed
   return { success: true, message: event.details, events: [event] };
 }
 
@@ -736,7 +830,7 @@ function playerMoveMuscle(fromTerritoryId: string, toTerritoryId: string, amount
     details: `Moved ${amount} muscle from ${from.name} to ${to.name}.`,
   };
   gameState.events.push(event);
-  saveState();
+  // Don't save here - let the action handler save after setting playerActed
   return { success: true, message: event.details, events: [event] };
 }
 
@@ -744,7 +838,14 @@ function playerSendMessage(toFamily: string, type: DiplomacyMessage['type'], tar
   const from = gameState.playerFamily!;
   if (!gameState.families[toFamily]) return { success: false, message: 'Invalid target family.', events: [] };
 
-  const msg: DiplomacyMessage = { from, to: toFamily, type, targetFamily, turn: gameState.turn };
+  const msg: DiplomacyMessage = { 
+    from, 
+    to: toFamily, 
+    type, 
+    targetFamily, 
+    turn: gameState.turn,
+    status: (type === 'partnership' || type === 'coordinate_attack') ? 'pending' : undefined
+  };
   gameState.diplomacy.push(msg);
 
   const typeLabels: Record<string, string> = {
@@ -761,7 +862,7 @@ function playerSendMessage(toFamily: string, type: DiplomacyMessage['type'], tar
     details: `${gameState.families[from].name} ${typeLabels[type]} with ${gameState.families[toFamily].name}.`,
   };
   gameState.events.push(event);
-  saveState();
+  // Don't save here - let the action handler save after setting playerMessaged
   return { success: true, message: event.details, events: [event] };
 }
 
@@ -845,8 +946,8 @@ app.post('/api/action', async (c) => {
     case 'attack':
       result = playerAttack(body.fromTerritoryIds || [], body.targetTerritoryId, body.musclePerTerritory || {});
       break;
-    case 'upgrade':
-      result = playerUpgrade(body.territoryId);
+    case 'business':
+      result = playerBusiness(body.territoryId, body.businessType);
       break;
     case 'move':
       result = playerMoveMuscle(body.fromTerritoryId, body.toTerritoryId, body.amount || 1);
@@ -864,6 +965,7 @@ app.post('/api/action', async (c) => {
     } else {
       gameState.playerActed = true;
     }
+    saveState();
     broadcast({ type: 'state_update', state: gameState });
   }
   return c.json(result);
@@ -875,6 +977,50 @@ app.post('/api/reset', async (c) => {
   saveState();
   broadcast({ type: 'state_update', state: gameState });
   return c.json({ success: true });
+});
+
+// Respond to diplomacy message (accept/reject)
+app.post('/api/diplomacy-respond', async (c) => {
+  if (gameState.phase !== 'playing') return c.json({ error: 'Game is not in progress.' }, 400);
+  if (!gameState.playerFamily) return c.json({ error: 'No player family selected.' }, 400);
+  
+  const body = await c.req.json();
+  const { messageIndex, response } = body; // response: 'accept' | 'reject'
+  
+  if (typeof messageIndex !== 'number') return c.json({ error: 'Invalid messageIndex.' }, 400);
+  if (response !== 'accept' && response !== 'reject') return c.json({ error: 'Invalid response. Must be "accept" or "reject".' }, 400);
+  
+  const msg = gameState.diplomacy[messageIndex];
+  if (!msg) return c.json({ error: 'Message not found.' }, 400);
+  if (msg.to !== gameState.playerFamily) return c.json({ error: 'This message is not for you.' }, 400);
+  if (msg.status && msg.status !== 'pending') return c.json({ error: 'Message already responded to.' }, 400);
+  
+  // Update message status
+  msg.status = response === 'accept' ? 'accepted' : 'rejected';
+  msg.respondedTurn = gameState.turn;
+  console.log('[diplomacy-respond] Updated message:', JSON.stringify(msg));
+  
+  const family = gameState.families[gameState.playerFamily];
+  const fromFamily = gameState.families[msg.from];
+  const typeLabels: Record<string, string> = {
+    partnership: 'partnership',
+    coordinate_attack: 'coordinate attack proposal',
+    war: 'war declaration',
+    intel: 'intelligence sharing',
+  };
+  
+  const event: GameEvent = {
+    turn: gameState.turn,
+    actor: family.name,
+    action: 'diplomacy',
+    details: `${family.name} ${response === 'accept' ? 'accepted' : 'rejected'} ${fromFamily.name}'s ${typeLabels[msg.type]}.`,
+  };
+  gameState.events.push(event);
+  console.log('[diplomacy-respond] About to save, diplomacy array:', JSON.stringify(gameState.diplomacy));
+  saveState();
+  broadcast({ type: 'state_update', state: gameState });
+  
+  return c.json({ success: true, message: event.details, events: [event] });
 });
 
 // ── WebSocket for live updates ──

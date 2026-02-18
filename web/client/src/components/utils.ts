@@ -1,4 +1,7 @@
-// Client-side utility to match server's income formula
-export function territoryIncome(level: number): number {
-  return Math.floor(100 * Math.pow(1.5, level - 1));
+// Client-side utility to match server's business income
+import type { BusinessType } from '../types';
+import { BUSINESS_DEFINITIONS } from '../types';
+
+export function territoryIncome(business: BusinessType): number {
+  return BUSINESS_DEFINITIONS[business].income;
 }

@@ -1,11 +1,20 @@
 // ── Game Types ──
 
+export type BusinessType = 
+  | 'none'
+  | 'protection'
+  | 'numbers'
+  | 'speakeasy'
+  | 'brothel'
+  | 'casino'
+  | 'smuggling';
+
 export interface Territory {
   id: string;
   name: string;
   owner: string | null;
   muscle: number;
-  level: number;
+  business: BusinessType;
 }
 
 export interface FamilyState {
@@ -14,6 +23,7 @@ export interface FamilyState {
   wealth: number;
   totalMuscle: number;
   personality: 'aggressive' | 'business' | 'cunning' | 'defensive';
+  lastAttackedBy: string | null;
 }
 
 export interface DiplomacyMessage {
@@ -22,6 +32,8 @@ export interface DiplomacyMessage {
   type: 'partnership' | 'coordinate_attack' | 'war' | 'intel';
   targetFamily?: string;
   turn: number;
+  status?: 'pending' | 'accepted' | 'rejected';
+  respondedTurn?: number;
 }
 
 export interface GameEvent {
@@ -45,7 +57,7 @@ export interface SaveState {
   events: GameEvent[];
 }
 
-export type ActionType = 'hire' | 'attack' | 'upgrade' | 'move' | 'message';
+export type ActionType = 'hire' | 'attack' | 'business' | 'move' | 'message';
 
 export type DiplomacyType = 'partnership' | 'coordinate_attack' | 'war' | 'intel';
 
@@ -58,9 +70,19 @@ export const FAMILY_COLORS: Record<string, string> = {
 
 export const FAMILY_DESCRIPTIONS: Record<string, { tagline: string; personality: string }> = {
   marinelli: { tagline: 'Blood & Iron', personality: 'Aggressive — prioritizes attacks and territorial expansion' },
-  rossetti: { tagline: 'Money Talks', personality: 'Business — prioritizes upgrades and wealth accumulation' },
+  rossetti: { tagline: 'Money Talks', personality: 'Business — prioritizes business upgrades and wealth accumulation' },
   falcone: { tagline: 'Silent Knives', personality: 'Cunning — exploits weakness, balanced strategy' },
   moretti: { tagline: 'Honor Bound', personality: 'Defensive — builds strength, retaliates when attacked' },
+};
+
+export const BUSINESS_DEFINITIONS: Record<BusinessType, { name: string; cost: number; income: number; description: string; upgradesFrom: BusinessType[] }> = {
+  none: { name: 'Unclaimed', cost: 0, income: 0, description: 'No operations', upgradesFrom: [] },
+  protection: { name: 'Protection Racket', cost: 150, income: 100, description: 'Basic street-level shakedowns', upgradesFrom: ['none'] },
+  numbers: { name: 'Numbers Racket', cost: 250, income: 150, description: 'Illegal lottery operations', upgradesFrom: ['protection'] },
+  speakeasy: { name: 'Speakeasy', cost: 400, income: 225, description: 'Underground drinking establishment', upgradesFrom: ['protection', 'numbers'] },
+  brothel: { name: 'Brothel', cost: 600, income: 340, description: 'House of ill repute', upgradesFrom: ['numbers', 'speakeasy'] },
+  casino: { name: 'Casino', cost: 1000, income: 500, description: 'High-stakes gambling den', upgradesFrom: ['speakeasy', 'brothel'] },
+  smuggling: { name: 'Smuggling Operation', cost: 1500, income: 750, description: 'International contraband trade', upgradesFrom: ['casino', 'brothel'] },
 };
 
 export const DIPLOMACY_LABELS: Record<DiplomacyType, string> = {

@@ -26,7 +26,7 @@ export function FamilyOverview({ compact }: { compact?: boolean }) {
           const color = FAMILY_COLORS[fid] || '#888';
           const isPlayer = fid === state.playerFamily;
           const territories = state.territories.filter((t) => t.owner === fid);
-          const income = territories.reduce((s, t) => s + territoryIncome(t.level), 0);
+          const income = territories.reduce((s, t) => s + territoryIncome(t.business), 0);
           const muscle = territories.reduce((s, t) => s + t.muscle, 0);
           const upkeep = muscle * 10;
           const eliminated = territories.length === 0;
@@ -82,7 +82,7 @@ export function FamilyOverview({ compact }: { compact?: boolean }) {
         const color = FAMILY_COLORS[fid] || '#888';
         const isPlayer = fid === state.playerFamily;
         const territories = state.territories.filter((t) => t.owner === fid);
-        const income = territories.reduce((s, t) => s + territoryIncome(t.level), 0);
+        const income = territories.reduce((s, t) => s + territoryIncome(t.business), 0);
         const muscle = territories.reduce((s, t) => s + t.muscle, 0);
         const upkeep = muscle * 10;
         const eliminated = territories.length === 0;
