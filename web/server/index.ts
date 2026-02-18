@@ -458,6 +458,18 @@ function processAIDiplomacy(familyId: string, action: AIAction): GameEvent | nul
   if (target === familyId) return null;
   if (type === 'coordinate_attack' && (!targetFamily || !gameState.families[targetFamily])) return null;
 
+  // Block duplicate proposals — don't re-propose if there's already an accepted or pending one
+  if (type === 'partnership' || type === 'coordinate_attack') {
+    const existingActive = gameState.diplomacy.find(d =>
+      d.from === familyId && d.to === target && d.type === type &&
+      (d.status === 'pending' || d.status === 'accepted')
+    );
+    if (existingActive) {
+      console.log(`[diplomacy] Blocked duplicate ${type} from ${familyId} to ${target} (already ${existingActive.status})`);
+      return null;
+    }
+  }
+
   const msg: DiplomacyMessage = {
     from: familyId,
     to: target,

@@ -121,7 +121,13 @@ export function buildFamilyPrompt(familyId: string, state: SaveState): string {
   // Diplomacy messages to/from this family
   const recentDiplomacy = state.diplomacy
     .filter(d => (d.to === familyId || d.from === familyId) && d.turn >= state.turn - 3)
-    .map(d => `  - Turn ${d.turn}: ${d.from} → ${d.to}: ${d.type}${d.targetFamily ? ` (target: ${d.targetFamily})` : ''}`)
+    .map(d => {
+      let statusStr = '';
+      if (d.status === 'accepted') statusStr = ' ✅ ACCEPTED';
+      else if (d.status === 'rejected') statusStr = ' ❌ REJECTED';
+      else if (d.status === 'pending') statusStr = ' ⏳ PENDING (awaiting response)';
+      return `  - Turn ${d.turn}: ${d.from} → ${d.to}: ${d.type}${d.targetFamily ? ` (target: ${d.targetFamily})` : ''}${statusStr}`;
+    })
     .join('\n') || '  (none)';
 
   // Player family info
@@ -224,6 +230,8 @@ You may ALSO send ONE diplomacy message to another active family:
 - **PARTNERSHIP** <family_id> — Propose alliance (may reduce hostility)
 - **COORDINATE_ATTACK** <family_id> against <target_family_id> — Propose joint attack
 ${activeFamilyIds.length > 0 ? `Active families you can message: ${activeFamilyIds.join(', ')}` : 'No active families to message.'}
+
+⚠️ **Do NOT re-propose partnerships that are already ACCEPTED or still PENDING.** Check the diplomacy log above. Only propose if there is no existing active/pending partnership with that family.
 
 ## RESPONSE FORMAT
 
