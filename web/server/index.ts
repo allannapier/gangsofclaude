@@ -252,9 +252,10 @@ function executeAIAttack(state: SaveState, familyId: string, target: Territory):
 
   if (combat.success) {
     const prevOwner = target.owner;
+    const totalDefenderLost = target.muscle + combat.defenderLosses; // all muscle lost (killed + captured)
     target.owner = familyId;
     const survivingAttackers = muscleToSend - combat.attackerLosses;
-    target.muscle += survivingAttackers;
+    target.muscle = survivingAttackers; // Reset — defender muscle wiped on conquest
     
     // Track last attacker for elimination bounty
     if (prevOwner) {
@@ -269,7 +270,7 @@ function executeAIAttack(state: SaveState, familyId: string, target: Territory):
       actor: family.name,
       action: 'attack',
       details: `${family.name} attacked ${target.name} (owned by ${prevOwner || 'nobody'}) with ${muscleToSend} muscle.`,
-      result: `Victory! Captured ${target.name}. Lost ${combat.attackerLosses}, defender lost ${combat.defenderLosses}.`,
+      result: `Victory! Captured ${target.name}. Lost ${combat.attackerLosses}, defender lost all ${totalDefenderLost} muscle.`,
     };
   } else {
     return {
@@ -741,9 +742,10 @@ function playerAttack(fromTerritoryIds: string[], targetTerritoryId: string, mus
   const events: GameEvent[] = [];
   if (combat.success) {
     const prevOwner = target.owner;
+    const totalDefenderLost = target.muscle + combat.defenderLosses; // all muscle lost (killed + captured)
     target.owner = gameState.playerFamily!;
     const surviving = totalMuscle - combat.attackerLosses;
-    target.muscle += surviving;
+    target.muscle = surviving; // Reset — defender muscle wiped on conquest
     
     // Track last attacker for elimination bounty
     if (prevOwner) {
@@ -758,7 +760,7 @@ function playerAttack(fromTerritoryIds: string[], targetTerritoryId: string, mus
       actor: family.name,
       action: 'attack',
       details: `Attacked ${target.name}${prevOwner ? ` (${gameState.families[prevOwner]?.name})` : ''} with ${totalMuscle} muscle.`,
-      result: `Victory! Captured ${target.name}. Lost ${combat.attackerLosses}, they lost ${combat.defenderLosses}.`,
+      result: `Victory! Captured ${target.name}. Lost ${combat.attackerLosses}, they lost all ${totalDefenderLost} muscle.`,
     };
     events.push(event);
   } else {
