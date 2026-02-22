@@ -319,7 +319,7 @@ You MUST respond with ONLY a valid JSON object, no other text:
   "action": "attack|claim|hire|business|wait",
   "target": "territory_id_or_null",
   "count": "number 1-${MAX_HIRE_PER_TURN} (optional, only for hire action)",
-  "musclePerTerritory": {"your_territory_id": 3} (optional, only for attack action),
+  "musclePerTerritory": {"your_territory_id": 3},
   "business": "protection|numbers|speakeasy|brothel|casino|smuggling (only for business action)",
   "reasoning": "1-2 sentence strategic explanation",
   "diplomacy": {"type": "war|partnership|coordinate_attack", "target": "family_id", "targetFamily": "family_id_only_for_coordinate_attack"} or null,
@@ -357,11 +357,12 @@ export function parseAIResponse(raw: string): AIAction | null {
     const musclePerTerritory = (parsed.musclePerTerritory &&
       typeof parsed.musclePerTerritory === 'object' &&
       !Array.isArray(parsed.musclePerTerritory))
-      ? Object.fromEntries(
-        Object.entries(parsed.musclePerTerritory as Record<string, unknown>)
+      ? (() => {
+        const entries = Object.entries(parsed.musclePerTerritory as Record<string, unknown>)
           .map(([territoryId, amount]) => [territoryId, Math.floor(Number(amount))] as const)
-          .filter(([, amount]) => Number.isFinite(amount) && amount > 0)
-      )
+          .filter(([, amount]) => Number.isFinite(amount) && amount > 0);
+        return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+      })()
       : undefined;
 
     // Validate required fields

@@ -418,8 +418,7 @@ function executeAIClaim(state: SaveState, familyId: string, unclaimed: Territory
 function executeAIHire(state: SaveState, familyId: string, requestedCount?: number): GameEvent {
   const family = state.families[familyId];
   const maxAffordable = Math.min(MAX_HIRE_PER_TURN, Math.floor(family.wealth / MUSCLE_HIRE_COST));
-  const hasRequestedCount = Number.isInteger(requestedCount) && requestedCount !== undefined && requestedCount > 0;
-  const desiredCount = hasRequestedCount
+  const desiredCount = (requestedCount !== undefined && Number.isInteger(requestedCount) && requestedCount > 0)
     ? Math.min(requestedCount, MAX_HIRE_PER_TURN)
     : maxAffordable;
   const count = Math.min(desiredCount, maxAffordable);
@@ -511,11 +510,12 @@ function executeAIAction(familyId: string, action: AIAction): GameEvent[] {
       if (!target || target.owner === familyId || target.owner === null) {
         return [{ turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} targeted invalid territory.${tauntSuffix}` }];
       }
+      const defenderName = gameState.families[target.owner!]?.name || 'unknown';
       const attackEvents = executeAIAttack(gameState, familyId, target, action.musclePerTerritory);
       // Override last event's details with reasoning
       if (attackEvents.length > 0) {
         const last = attackEvents[attackEvents.length - 1];
-        last.details = `${family.name} attacked ${target.name} (${gameState.families[target.owner!]?.name || 'unknown'}). ${action.reasoning}${tauntSuffix}`;
+        last.details = `${family.name} attacked ${target.name} (${defenderName}). ${action.reasoning}${tauntSuffix}`;
       }
       return attackEvents;
     }
