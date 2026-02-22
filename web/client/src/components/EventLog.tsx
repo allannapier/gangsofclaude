@@ -32,9 +32,13 @@ export function EventLog() {
               bounty: '💰',
               victory: '🏆',
               wait: '⏳',
+              city_event: '📰',
+              covert_op: '🕵️',
+              betrayal: '⚠️',
             };
+            const isCityEvent = event.action === 'city_event';
             return (
-              <div key={i} className="text-sm border-l-2 pl-3 py-1" style={{ borderColor: color }}>
+              <div key={i} className={`text-sm border-l-2 pl-3 py-1 ${isCityEvent ? 'bg-amber-900/20' : ''}`} style={{ borderColor: isCityEvent ? '#d97706' : color }}>
                 <div className="flex items-center gap-2">
                   <span className="text-zinc-500 text-xs">T{event.turn}</span>
                   <span className="inline-flex items-center justify-center w-5">{actionIcons[event.action] || '📌'}</span>

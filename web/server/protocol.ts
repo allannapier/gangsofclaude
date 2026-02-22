@@ -46,6 +46,39 @@ export interface GameEvent {
   result?: string;
 }
 
+// ── City Events ──
+
+export type CityEventType = 
+  | 'police_crackdown'
+  | 'black_market'
+  | 'turf_war'
+  | 'rat_in_ranks'
+  | 'press_scandal'
+  | 'windfall';
+
+export interface ActiveEffect {
+  id: string;
+  type: CityEventType;
+  targetFamily?: string;
+  targetTerritory?: string;
+  turnsRemaining: number;
+  description: string;
+}
+
+export interface IntelReport {
+  targetFamily: string;
+  wealth: number;
+  territories: { id: string; name: string; muscle: number; business: BusinessType }[];
+  gatheredTurn: number;
+  expiresTurn: number;
+}
+
+export interface Fortification {
+  territoryId: string;
+  bonusDefense: number;
+  expiresTurn: number;
+}
+
 export interface SaveState {
   turn: number;
   phase: 'setup' | 'playing' | 'ended';
@@ -55,6 +88,9 @@ export interface SaveState {
   territories: Territory[];
   diplomacy: DiplomacyMessage[];
   events: GameEvent[];
+  activeEffects: ActiveEffect[];
+  intel: IntelReport[];
+  fortifications: Fortification[];
 }
 
 // WebSocket messages server → browser

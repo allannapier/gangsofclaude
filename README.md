@@ -23,7 +23,7 @@ The web UI provides:
 
 ## Player Actions
 
-Each turn you get **1 action** plus **1 free diplomacy message**:
+Each turn you get **1 action** + **1 covert operation** + **1 free diplomacy message**:
 
 | Action | Description |
 |--------|-------------|
@@ -33,12 +33,30 @@ Each turn you get **1 action** plus **1 free diplomacy message**:
 | **Move** | Transfer muscle between your territories |
 | **Message** | Send diplomacy (free — doesn't count as your action) |
 
+### 🕵️ Covert Operations
+
+Each turn you also get **1 free covert op** — a separate action that doesn't consume your main action:
+
+| Operation | Cost | Description |
+|-----------|------|-------------|
+| **Spy** | $200 | Plant a mole — reveals target family's territories, muscle, and wealth for 3 turns |
+| **Sabotage** | $300 | 60% chance to downgrade an enemy territory's business |
+| **Bribe** | $150 | 70% chance to steal 1–2 muscle from an enemy territory |
+| **Fortify** | $200 | +3 defense bonus on your own territory for 2 turns |
+
 ### Diplomacy Options
 
-- **Partnership** — Propose alliance with another family
+- **Partnership** — Propose alliance with another family (grants +2 defense to both allies)
 - **Coordinate Attack** — Plan joint offensive against a rival
-- **Declare War** — Openly declare hostility
+- **Declare War** — Openly declare hostility (breaks any existing alliance)
 - **Share Intel** — Exchange information about rivals
+
+### 🤝 Alliances & Betrayal
+
+Alliances are now **meaningful**:
+- Active partnerships grant **+2 defense** to both families' territories
+- **Betraying an ally** (attacking a partner) costs you **2 muscle + $200** as a penalty
+- AI families form, honor, and break alliances based on their personality
 
 ## The Four Families
 
@@ -65,9 +83,13 @@ Each family is an **LLM-powered agent** with distinct personality and strategy:
 1. **Hire Early:** Muscle is cheap — territories without defenders are easy targets.
 2. **Choose Your Battles:** Attacking costs muscle on both sides. Pick weak targets.
 3. **Upgrade Strategically:** Higher-level territories generate more income per turn.
-4. **Use Diplomacy:** Messages are free. Alliances can turn the tide.
-5. **Watch the AI:** Each family has tendencies — learn their patterns.
-6. **Control the Map:** Territory = income = power. Expand or be consumed.
+4. **Use Diplomacy:** Messages are free. Alliances give +2 defense and cost nothing.
+5. **Don't Forget Covert Ops:** You get a free covert op every turn — use it or lose it.
+6. **Spy Before Attacking:** Intel reveals enemy muscle counts so you can pick weak spots.
+7. **Fortify Key Territories:** +3 defense can turn a vulnerable territory into a fortress.
+8. **Watch for City Events:** Crackdowns freeze income, windfalls can swing the game.
+9. **Betray Wisely:** Breaking an alliance costs 2 muscle + $200 — make sure it's worth it.
+10. **Control the Map:** Territory = income = power. Expand or be consumed.
 
 ## Winning the Game
 
@@ -81,7 +103,42 @@ Each family is an **LLM-powered agent** with distinct personality and strategy:
 - **Dynamic Emergent Storytelling** — AI families act independently with reasoning and taunts
 - **Diplomacy System** — Free messages each turn for alliances, threats, or intel sharing
 - **Territory Control** — Grid-based map with upgradeable territories
-- **Balanced Turns** — Player and AI each get 1 action + 1 diplomacy per turn
+- **Balanced Turns** — Player and AI each get 1 action + 1 covert op + 1 diplomacy per turn
+
+### 🎲 The Underworld — Random City Events
+
+Every turn has a **30% chance** of a city event — unpredictable chaos that keeps the game dynamic:
+
+| Event | Effect |
+|-------|--------|
+| 🚔 **Police Crackdown** | A territory's income is frozen for 2 turns |
+| 💰 **Black Market Opportunity** | The poorest family receives $500 (rubber-banding) |
+| 🔥 **Turf War** | A random territory gains +2 defense for 2 turns |
+| 🐀 **Rat in the Ranks** | 1 muscle deserts from a random territory |
+| 📰 **Press Scandal** | A family's total income is halved for 2 turns |
+| 💵 **Windfall** | A random family receives $300 |
+
+City events appear with amber highlights in the event log and turn modal. Active effects (crackdowns, turf wars, scandals) are displayed on territory cards and in the action panel.
+
+### 🕵️ Covert Operations System
+
+The covert ops system adds a **strategic second layer** to each turn. Both the player and AI families get one covert op per turn, separate from their main action. AI families choose covert ops based on personality:
+
+- **Falcone** (cunning) — favors spy and sabotage
+- **Marinelli** (aggressive) — prefers fortify for attack preparation
+- **Rossetti** (business) — uses bribe to weaken rivals cheaply
+- **Moretti** (defensive) — fortifies key positions
+
+Intel reports from successful spy operations show detailed breakdowns of enemy territories, muscle distribution, and business operations.
+
+### 🤝 Alliance System
+
+Alliances add real consequences to diplomacy:
+
+- **Defense Bonus** — Allied families grant each other +2 territory defense
+- **Betrayal Penalty** — Attacking an ally costs 2 muscle + $200
+- **Visual Indicators** — 🤝 icons on family cards show active partnerships
+- **AI Behavior** — Each family personality approaches alliances differently (Rossetti seeks them, Marinelli breaks them, Falcone manipulates them, Moretti honors them)
 
 ## Technical Details
 
@@ -100,13 +157,16 @@ Browser (React + Zustand) ←→ WebSocket ←→ Bun/Hono Server (port 3456) �
 ### Turn Processing
 
 1. Player clicks "Next Turn"
-2. Server collects economy (income/upkeep) for all families
-3. Server spawns Claude CLI process with `--sdk-url`
-4. For each AI family: sends prompt with personality + game state + available actions
-5. LLM responds with JSON: `{action, target, reasoning, diplomacy, taunt}`
-6. Server executes the action mechanics
-7. Events broadcast to browser via WebSocket in real-time
-8. Win condition checked after all families act
+2. Active effects tick down (crackdowns, scandals, turf wars expire)
+3. Server collects economy (income/upkeep) for all families, respecting active effects
+4. City event rolls (30% chance) — may trigger crackdown, windfall, rat, etc.
+5. Server spawns Claude CLI process with `--sdk-url`
+6. For each AI family: sends prompt with personality + game state + available actions
+7. LLM responds with JSON: `{action, target, reasoning, diplomacy, covert, taunt}`
+8. Server executes the main action + covert op + diplomacy mechanics
+9. Events broadcast to browser via WebSocket in real-time
+10. Expired intel reports and fortifications cleaned up
+11. Win condition checked after all families act
 
 ### Key Server Files
 

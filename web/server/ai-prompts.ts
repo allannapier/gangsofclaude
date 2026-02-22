@@ -9,8 +9,14 @@ import {
   calculateUpkeepCost,
   MUSCLE_HIRE_COST,
   BUSINESS_DEFINITIONS,
+  COVERT_OP_DEFINITIONS,
   canUpgradeBusiness,
   territoryIncome,
+  areAllied,
+  getActiveAlliances,
+  getFortificationBonus,
+  getTerritoryDefenseBonus,
+  isTerritoryCrackdown,
 } from './mechanics';
 
 // Family personality descriptions embedded in prompts
@@ -22,6 +28,8 @@ You rule through fear and overwhelming force. You are the oldest family in the c
 - Prefer hiring muscle over upgrading businesses. You want raw power.
 - Declare war readily. Diplomacy is a last resort.
 - When wealthy and strong: launch attacks. When weak: rebuild muscle before striking.
+- **Covert ops:** Prefer fortify to protect your turf. Rarely use spy or sabotage — that's sneaky, not your style.
+- **Alliances:** Break them readily if it serves your interests. The betrayal penalty is worth it for the right conquest.
 - Your tone is blunt, threatening, old-school mafia.`,
 
   rossetti: `You are the **Rossetti Family** — Business Diplomats.
@@ -31,6 +39,8 @@ You rule through wealth and influence. Violence is expensive and wasteful — mo
 - Only attack when numbers overwhelmingly favor you.
 - Form alliances against aggressors. Coordinate attacks only against the strongest rival.
 - When wealthy: upgrade businesses and dominate economically. When threatened: seek allies.
+- **Covert ops:** Love bribe (steal muscle cheaply) and spy (knowledge is power). Use sabotage against economic rivals.
+- **Alliances:** Maintain partnerships. The defense bonus and coordination bonuses are valuable to you.
 - Your tone is polished, business-like, condescending.`,
 
   falcone: `You are the **Falcone Family** — Cunning Manipulators.
@@ -40,6 +50,8 @@ You rule through intelligence and deception. Let enemies destroy each other whil
 - Always target whoever is currently winning — bring them down.
 - When rivals are fighting: claim territory while they're distracted.
 - Prefer attacking weak territories (low muscle) for guaranteed wins.
+- **Covert ops:** LOVE spy and sabotage. These are your bread and butter. Information is power, and sabotage weakens enemies without direct confrontation.
+- **Alliances:** Form them strategically, then betray at the optimal moment for maximum gain.
 - Your tone is cryptic, calculating, theatrical.`,
 
   moretti: `You are the **Moretti Family** — Honorable Traditionalists.
@@ -49,6 +61,8 @@ You rule through loyalty and measured strength. You don't start wars — you fin
 - Honor partnerships. If an ally asks for help, consider it.
 - Patient expansion: claim unclaimed territory when safe, never overextend.
 - Upgrade businesses for long-term income stability.
+- **Covert ops:** Prefer fortify (protect your people) and spy (know your enemies). Never use bribe — that's dishonorable.
+- **Alliances:** ALWAYS honor them. You NEVER betray a partner. Your word is your bond.
 - Your tone is dignified, measured, old-world respect.`,
 };
 
@@ -61,6 +75,10 @@ export interface AIAction {
     type: 'war' | 'partnership' | 'coordinate_attack';
     target: string; // family_id
     targetFamily?: string; // for coordinate_attack
+  } | null;
+  covert?: {
+    type: 'spy' | 'sabotage' | 'bribe' | 'fortify';
+    target: string; // family_id or territory_id
   } | null;
   taunt?: string; // in-character flavor text for the game log
 }
@@ -130,6 +148,30 @@ export function buildFamilyPrompt(familyId: string, state: SaveState): string {
     })
     .join('\n') || '  (none)';
 
+  // Active alliances
+  const alliances = getActiveAlliances(state);
+  const myAlliances = alliances.filter(a => a.family1 === familyId || a.family2 === familyId);
+  const allianceList = myAlliances.length > 0
+    ? myAlliances.map(a => {
+      const partner = a.family1 === familyId ? a.family2 : a.family1;
+      return `  - 🤝 Allied with ${state.families[partner]?.name || partner} (+2 defense bonus, betrayal costs $200 + 2 muscle)`;
+    }).join('\n')
+    : '  (none)';
+
+  // Active city effects
+  const activeEffects = state.activeEffects.length > 0
+    ? state.activeEffects.map(e => `  - ${e.description} (${e.turnsRemaining} turns remaining)`).join('\n')
+    : '  (none)';
+
+  // Fortifications
+  const activeForts = state.fortifications.filter(f => f.expiresTurn > state.turn);
+  const fortList = activeForts.length > 0
+    ? activeForts.map(f => {
+      const terr = state.territories.find(t => t.id === f.territoryId);
+      return `  - ${terr?.name || f.territoryId}: +${f.bonusDefense} defense (expires turn ${f.expiresTurn})`;
+    }).join('\n')
+    : '  (none)';
+
   // Player family info
   const playerInfo = state.playerFamily
     ? `The player controls the **${state.families[state.playerFamily]?.name || state.playerFamily}** family.`
@@ -193,6 +235,15 @@ ${recentEvents}
 ### Diplomacy History (last 3 turns)
 ${recentDiplomacy}
 
+### Active Alliances
+${allianceList}
+
+### City Effects (active this turn)
+${activeEffects}
+
+### Fortifications
+${fortList}
+
 ## AVAILABLE ACTIONS — Choose exactly ONE:
 
 ${canAttack ? `**ATTACK** — Send muscle to attack an enemy territory
@@ -233,6 +284,20 @@ ${activeFamilyIds.length > 0 ? `Active families you can message: ${activeFamilyI
 
 ⚠️ **Do NOT re-propose partnerships that are already ACCEPTED or still PENDING.** Check the diplomacy log above. Only propose if there is no existing active/pending partnership with that family.
 
+## ALLIANCE MECHANICS
+- **Active partnerships** grant +2 defense bonus when your allied territory is attacked
+- **Betrayal penalty:** If you attack a partner, you lose $200 and 2 muscle desert
+- **Coordinate attacks:** When you and your ally attack the same family's territory in the same turn, you get +30% combat bonus
+- Consider these mechanics when deciding whether to maintain or break alliances
+
+## OPTIONAL: Covert Operation (in addition to your action and diplomacy)
+
+You may ALSO perform ONE covert operation:
+- **SPY** <family_id> ($200) — Reveals target's full muscle distribution and wealth for 3 turns. Always succeeds.
+- **SABOTAGE** <territory_id> ($300) — 60% chance to downgrade target territory's business by 1 level. Must be enemy territory with a business.
+- **BRIBE** <territory_id> ($150) — 70% chance to steal 1-2 muscle from enemy territory.
+- **FORTIFY** <territory_id> ($200) — Add +3 defense bonus to one of YOUR territories for 2 turns. Always succeeds.
+
 ## RESPONSE FORMAT
 
 You MUST respond with ONLY a valid JSON object, no other text:
@@ -243,6 +308,7 @@ You MUST respond with ONLY a valid JSON object, no other text:
   "business": "protection|numbers|speakeasy|brothel|casino|smuggling (only for business action)",
   "reasoning": "1-2 sentence strategic explanation",
   "diplomacy": {"type": "war|partnership|coordinate_attack", "target": "family_id", "targetFamily": "family_id_only_for_coordinate_attack"} or null,
+  "covert": {"type": "spy|sabotage|bribe|fortify", "target": "family_id_or_territory_id"} or null,
   "taunt": "short in-character quote for the game log (max 15 words)"
 }
 \`\`\`
@@ -286,6 +352,7 @@ export function parseAIResponse(raw: string): AIAction | null {
       business: parsed.business || undefined,
       reasoning: parsed.reasoning || 'No reasoning provided.',
       diplomacy: parsed.diplomacy || null,
+      covert: parsed.covert || null,
       taunt: parsed.taunt || undefined,
     };
   } catch (e) {

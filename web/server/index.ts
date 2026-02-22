@@ -7,6 +7,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { isPinSet, setupPin, verifyPin, createSession, validateSession } from './auth';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import {
   createInitialState,
@@ -19,13 +20,27 @@ import {
   territoryIncome,
   canUpgradeBusiness,
   getBusinessDefenseBonus,
+  rollCityEvent,
+  processActiveEffects,
+  processExpiredIntelAndFortifications,
+  getFortificationBonus,
+  getTerritoryDefenseBonus,
+  getAllianceDefenseBonus,
+  areAllied,
+  applyBetrayalPenalty,
+  executeSpy,
+  executeSabotage,
+  executeBribe,
+  executeFortify,
   MUSCLE_HIRE_COST,
   BUSINESS_DEFINITIONS,
+  COVERT_OP_DEFINITIONS,
   type SaveState,
   type GameEvent,
   type DiplomacyMessage,
   type Territory,
   type BusinessType,
+  type CovertOpType,
 } from './mechanics';
 import { ClaudeAgentBridge } from './claude-bridge';
 import { buildFamilyPrompt, parseAIResponse, type AIAction } from './ai-prompts';
@@ -47,7 +62,13 @@ function loadState(): SaveState {
   try {
     if (existsSync(saveJsonPath)) {
       const raw = readFileSync(saveJsonPath, 'utf-8');
-      return JSON.parse(raw) as SaveState;
+      const state = JSON.parse(raw) as SaveState;
+      // Backfill new fields for old saves
+      if (!state.activeEffects) state.activeEffects = [];
+      if (!state.intel) state.intel = [];
+      if (!state.fortifications) state.fortifications = [];
+      if (state.playerCovertUsed === undefined) state.playerCovertUsed = false;
+      return state;
     }
   } catch (e) {
     console.error('Failed to load save.json, creating fresh state');
@@ -69,7 +90,7 @@ function broadcast(msg: any) {
 
 // ── AI Decision Making ──
 
-function aiDecideAction(familyId: string, state: SaveState): GameEvent | null {
+function aiDecideAction(familyId: string, state: SaveState): GameEvent[] | null {
   const family = state.families[familyId];
   if (!family) return null;
 
@@ -109,10 +130,10 @@ function aiDecideAction(familyId: string, state: SaveState): GameEvent | null {
         return executeAIAttack(state, familyId, target);
       }
       if (unclaimed.length > 0 && totalMuscle >= 2) {
-        return executeAIClaim(state, familyId, unclaimed);
+        return [executeAIClaim(state, familyId, unclaimed)];
       }
       if (family.wealth >= MUSCLE_HIRE_COST) {
-        return executeAIHire(state, familyId);
+        return [executeAIHire(state, familyId)];
       }
       break;
     }
@@ -135,14 +156,14 @@ function aiDecideAction(familyId: string, state: SaveState): GameEvent | null {
           }
         }
         if (affordable.length > 0) {
-          return executeAIBusiness(state, familyId, target, affordable[affordable.length - 1]);
+          return [executeAIBusiness(state, familyId, target, affordable[affordable.length - 1])];
         }
       }
       if (family.wealth >= MUSCLE_HIRE_COST && roll < 0.7) {
-        return executeAIHire(state, familyId);
+        return [executeAIHire(state, familyId)];
       }
       if (unclaimed.length > 0 && totalMuscle >= 2) {
-        return executeAIClaim(state, familyId, unclaimed);
+        return [executeAIClaim(state, familyId, unclaimed)];
       }
       break;
     }
@@ -160,17 +181,17 @@ function aiDecideAction(familyId: string, state: SaveState): GameEvent | null {
         return executeAIAttack(state, familyId, target);
       }
       if (unclaimed.length > 0 && totalMuscle >= 2) {
-        return executeAIClaim(state, familyId, unclaimed);
+        return [executeAIClaim(state, familyId, unclaimed)];
       }
       if (family.wealth >= MUSCLE_HIRE_COST) {
-        return executeAIHire(state, familyId);
+        return [executeAIHire(state, familyId)];
       }
       break;
     }
     case 'defensive': {
       // Moretti: build strength, retaliate only
       if (family.wealth >= MUSCLE_HIRE_COST && roll < 0.5) {
-        return executeAIHire(state, familyId);
+        return [executeAIHire(state, familyId)];
       }
       const upgradeable = myTerritories.filter(t => {
         const current = t.business;
@@ -188,7 +209,7 @@ function aiDecideAction(familyId: string, state: SaveState): GameEvent | null {
           }
         }
         if (affordable.length > 0) {
-          return executeAIBusiness(state, familyId, target, affordable[affordable.length - 1]);
+          return [executeAIBusiness(state, familyId, target, affordable[affordable.length - 1])];
         }
       }
       if (hasWarDeclaration && totalMuscle >= 5 && enemyTerritories.length > 0) {
@@ -198,7 +219,7 @@ function aiDecideAction(familyId: string, state: SaveState): GameEvent | null {
         return executeAIAttack(state, familyId, target);
       }
       if (unclaimed.length > 0 && totalMuscle >= 2) {
-        return executeAIClaim(state, familyId, unclaimed);
+        return [executeAIClaim(state, familyId, unclaimed)];
       }
       break;
     }
@@ -206,14 +227,77 @@ function aiDecideAction(familyId: string, state: SaveState): GameEvent | null {
 
   // Fallback: hire muscle if affordable, else do nothing
   if (family.wealth >= MUSCLE_HIRE_COST) {
-    return executeAIHire(state, familyId);
+    return [executeAIHire(state, familyId)];
   }
-  return { turn: state.turn, actor: family.name, action: 'wait', details: `${family.name} bides their time.` };
+  return [{ turn: state.turn, actor: family.name, action: 'wait', details: `${family.name} bides their time.` }];
 }
 
-function executeAIAttack(state: SaveState, familyId: string, target: Territory): GameEvent {
+// Mechanical fallback covert op for AI families
+function aiDecideCovertOp(familyId: string, state: SaveState): GameEvent[] {
+  const family = state.families[familyId];
+  if (!family || family.wealth < 150) return []; // Can't afford any op
+
+  const myTerritories = state.territories.filter(t => t.owner === familyId);
+  if (myTerritories.length === 0) return [];
+
+  const enemies = Object.keys(state.families).filter(f => f !== familyId && state.territories.some(t => t.owner === f));
+  if (enemies.length === 0) return [];
+
+  const roll = Math.random();
+  const randomEnemy = enemies[Math.floor(Math.random() * enemies.length)];
+  const enemyTerritories = state.territories.filter(t => t.owner === randomEnemy);
+  const randomEnemyTerritory = enemyTerritories.length > 0 ? enemyTerritories[Math.floor(Math.random() * enemyTerritories.length)] : null;
+
+  switch (family.personality) {
+    case 'cunning': // Falcone: loves spy and sabotage
+      if (roll < 0.5 && family.wealth >= 200) {
+        const result = executeSpy(state, familyId, randomEnemy);
+        return [result.event];
+      }
+      if (roll < 0.8 && randomEnemyTerritory && family.wealth >= 300) {
+        const result = executeSabotage(state, familyId, randomEnemyTerritory.id);
+        return [result.event];
+      }
+      break;
+    case 'aggressive': // Marinelli: prefers fortify
+      if (roll < 0.5 && family.wealth >= 200) {
+        const t = myTerritories[Math.floor(Math.random() * myTerritories.length)];
+        const result = executeFortify(state, familyId, t.id);
+        return [result.event];
+      }
+      break;
+    case 'business': // Rossetti: uses bribe
+      if (roll < 0.4 && randomEnemyTerritory && family.wealth >= 150) {
+        const result = executeBribe(state, familyId, randomEnemyTerritory.id);
+        return [result.event];
+      }
+      if (roll < 0.7 && family.wealth >= 200) {
+        const result = executeSpy(state, familyId, randomEnemy);
+        return [result.event];
+      }
+      break;
+    case 'defensive': // Moretti: fortify, rarely spy
+      if (roll < 0.6 && family.wealth >= 200) {
+        const t = myTerritories[Math.floor(Math.random() * myTerritories.length)];
+        const result = executeFortify(state, familyId, t.id);
+        return [result.event];
+      }
+      break;
+  }
+  return [];
+}
+
+function executeAIAttack(state: SaveState, familyId: string, target: Territory): GameEvent[] {
   const family = state.families[familyId];
   const myTerritories = state.territories.filter(t => t.owner === familyId && t.muscle > 0);
+  const events: GameEvent[] = [];
+
+  // Check for alliance betrayal
+  if (target.owner && areAllied(state, familyId, target.owner)) {
+    const betrayalEvent = applyBetrayalPenalty(state, familyId);
+    if (betrayalEvent) events.push(betrayalEvent);
+    state.diplomacy.push({ from: familyId, to: target.owner, type: 'war', turn: state.turn });
+  }
 
   // Send muscle from territories with the most muscle (leave at least 1 per territory)
   let muscleToSend = 0;
@@ -228,12 +312,14 @@ function executeAIAttack(state: SaveState, familyId: string, target: Territory):
   }
 
   if (muscleToSend <= 0) {
-    return { turn: state.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to attack but has no spare muscle.` };
+    events.push({ turn: state.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to attack but has no spare muscle.` });
+    return events;
   }
 
-  const combat = resolveCombat(muscleToSend, target.muscle, target.business);
-
-  // Apply losses
+  // Calculate extra defense from fortifications, turf war, and alliances
+  const extraDefense = getFortificationBonus(state, target.id) + getTerritoryDefenseBonus(state, target.id) +
+    (target.owner ? getAllianceDefenseBonus(state, target.owner) : 0);
+  const combat = resolveCombat(muscleToSend, target.muscle, target.business, extraDefense);
   let remainingAttackerLoss = combat.attackerLosses;
   for (const src of muscleSource) {
     const loss = Math.min(remainingAttackerLoss, src.amount);
@@ -265,21 +351,23 @@ function executeAIAttack(state: SaveState, familyId: string, target: Territory):
     // Business resets to protection on conquest (territory is damaged)
     target.business = 'protection';
     
-    return {
+    events.push({
       turn: state.turn,
       actor: family.name,
       action: 'attack',
       details: `${family.name} attacked ${target.name} (owned by ${prevOwner || 'nobody'}) with ${muscleToSend} muscle.`,
       result: `Victory! Captured ${target.name}. Lost ${combat.attackerLosses}, defender lost all ${totalDefenderLost} muscle.`,
-    };
+    });
+    return events;
   } else {
-    return {
+    events.push({
       turn: state.turn,
       actor: family.name,
       action: 'attack',
       details: `${family.name} attacked ${target.name} with ${muscleToSend} muscle.`,
       result: `Defeated! Lost ${combat.attackerLosses}, defender lost ${combat.defenderLosses}.`,
-    };
+    });
+    return events;
   }
 }
 
@@ -364,8 +452,11 @@ function processAITurns(): GameEvent[] {
     if (eliminated.includes(familyId)) continue;
     const event = aiDecideAction(familyId, gameState);
     if (event) {
-      events.push(event);
+      events.push(...event);
     }
+    // Mechanical covert op (separate from main action)
+    const covertEvents = aiDecideCovertOp(familyId, gameState);
+    events.push(...covertEvents);
   }
   return events;
 }
@@ -374,10 +465,10 @@ function processAITurns(): GameEvent[] {
  * Execute an AI action returned by the LLM agent.
  * The agent decides WHAT to do; this function executes the mechanics.
  */
-function executeAIAction(familyId: string, action: AIAction): GameEvent {
+function executeAIAction(familyId: string, action: AIAction): GameEvent[] {
   const family = gameState.families[familyId];
   if (!family) {
-    return { turn: gameState.turn, actor: familyId, action: 'wait', details: 'Family not found.' };
+    return [{ turn: gameState.turn, actor: familyId, action: 'wait', details: 'Family not found.' }];
   }
 
   const tauntSuffix = action.taunt ? ` "${action.taunt}"` : '';
@@ -385,13 +476,19 @@ function executeAIAction(familyId: string, action: AIAction): GameEvent {
   switch (action.action) {
     case 'attack': {
       if (!action.target) {
-        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} considered an attack but had no target.${tauntSuffix}` };
+        return [{ turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} considered an attack but had no target.${tauntSuffix}` }];
       }
       const target = gameState.territories.find(t => t.id === action.target);
       if (!target || target.owner === familyId || target.owner === null) {
-        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} targeted invalid territory.${tauntSuffix}` };
+        return [{ turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} targeted invalid territory.${tauntSuffix}` }];
       }
-      return { ...executeAIAttack(gameState, familyId, target), details: `${family.name} attacked ${target.name} (${gameState.families[target.owner!]?.name || 'unknown'}). ${action.reasoning}${tauntSuffix}` };
+      const attackEvents = executeAIAttack(gameState, familyId, target);
+      // Override last event's details with reasoning
+      if (attackEvents.length > 0) {
+        const last = attackEvents[attackEvents.length - 1];
+        last.details = `${family.name} attacked ${target.name} (${gameState.families[target.owner!]?.name || 'unknown'}). ${action.reasoning}${tauntSuffix}`;
+      }
+      return attackEvents;
     }
 
     case 'claim': {
@@ -399,23 +496,23 @@ function executeAIAction(familyId: string, action: AIAction): GameEvent {
         ? gameState.territories.filter(t => t.id === action.target && t.owner === null)
         : gameState.territories.filter(t => t.owner === null);
       if (unclaimed.length === 0) {
-        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} tried to claim territory but none available.${tauntSuffix}` };
+        return [{ turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} tried to claim territory but none available.${tauntSuffix}` }];
       }
       const result = executeAIClaim(gameState, familyId, unclaimed);
-      return { ...result, details: `${result.details} ${action.reasoning}${tauntSuffix}` };
+      return [{ ...result, details: `${result.details} ${action.reasoning}${tauntSuffix}` }];
     }
 
     case 'hire': {
       if (family.wealth < MUSCLE_HIRE_COST) {
-        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to hire but can't afford it.${tauntSuffix}` };
+        return [{ turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to hire but can't afford it.${tauntSuffix}` }];
       }
       const result = executeAIHire(gameState, familyId);
-      return { ...result, details: `${result.details} ${action.reasoning}${tauntSuffix}` };
+      return [{ ...result, details: `${result.details} ${action.reasoning}${tauntSuffix}` }];
     }
 
     case 'business': {
       if (!action.business) {
-        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade business but didn't specify which.${tauntSuffix}` };
+        return [{ turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade business but didn't specify which.${tauntSuffix}` }];
       }
       const myTerritories = gameState.territories.filter(t => t.owner === familyId);
       const target = action.target
@@ -423,25 +520,25 @@ function executeAIAction(familyId: string, action: AIAction): GameEvent {
         : myTerritories[0]; // default to first territory
       
       if (!target) {
-        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade business but had no valid territory.${tauntSuffix}` };
+        return [{ turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade business but had no valid territory.${tauntSuffix}` }];
       }
       
       const businessDef = BUSINESS_DEFINITIONS[action.business];
       if (!canUpgradeBusiness(target.business, action.business)) {
-        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade ${target.name} to ${businessDef.name} but can't upgrade from ${BUSINESS_DEFINITIONS[target.business].name}.${tauntSuffix}` };
+        return [{ turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade ${target.name} to ${businessDef.name} but can't upgrade from ${BUSINESS_DEFINITIONS[target.business].name}.${tauntSuffix}` }];
       }
       
       if (family.wealth < businessDef.cost) {
-        return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade business but couldn't afford it.${tauntSuffix}` };
+        return [{ turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to upgrade business but couldn't afford it.${tauntSuffix}` }];
       }
       
       const result = executeAIBusiness(gameState, familyId, target, action.business);
-      return { ...result, details: `${result.details} ${action.reasoning}${tauntSuffix}` };
+      return [{ ...result, details: `${result.details} ${action.reasoning}${tauntSuffix}` }];
     }
 
     case 'wait':
     default:
-      return { turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} bides their time. ${action.reasoning}${tauntSuffix}` };
+      return [{ turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} bides their time. ${action.reasoning}${tauntSuffix}` }];
   }
 }
 
@@ -494,6 +591,42 @@ function processAIDiplomacy(familyId: string, action: AIAction): GameEvent | nul
     action: 'diplomacy',
     details: `${family.name} ${typeLabels[type] || type} ${gameState.families[target].name}.`,
   };
+}
+
+function processAICovertOp(familyId: string, action: AIAction): GameEvent[] {
+  if (!action.covert) return [];
+
+  const { type, target } = action.covert;
+  if (!type || !target) return [];
+
+  const events: GameEvent[] = [];
+
+  switch (type) {
+    case 'spy': {
+      if (!gameState.families[target] || target === familyId) break;
+      const result = executeSpy(gameState, familyId, target);
+      events.push(result.event);
+      break;
+    }
+    case 'sabotage': {
+      const result = executeSabotage(gameState, familyId, target);
+      events.push(result.event);
+      break;
+    }
+    case 'bribe': {
+      const result = executeBribe(gameState, familyId, target);
+      events.push(result.event);
+      break;
+    }
+    case 'fortify': {
+      const result = executeFortify(gameState, familyId, target);
+      events.push(result.event);
+      break;
+    }
+  }
+
+  updateMuscleTotals();
+  return events;
 }
 
 /**
@@ -549,27 +682,44 @@ async function processAITurnsLLM(broadcastEvent: (event: GameEvent) => void): Pr
             broadcastEvent(diplomacyEvent);
           }
 
+          // Process covert operation
+          const covertEvents = processAICovertOp(familyId, aiAction);
+          for (const ce of covertEvents) {
+            events.push(ce);
+            broadcastEvent(ce);
+          }
+
           // Execute the action
-          const actionEvent = executeAIAction(familyId, aiAction);
-          events.push(actionEvent);
-          broadcastEvent(actionEvent);
+          const actionEvents = executeAIAction(familyId, aiAction);
+          for (const ae of actionEvents) {
+            events.push(ae);
+            broadcastEvent(ae);
+          }
         } else {
           // Failed to parse — fallback to mechanical AI for this family
           console.warn(`[next-turn] Failed to parse LLM response for ${familyName}, using fallback`);
-          const fallbackEvent = aiDecideAction(familyId, gameState);
-          if (fallbackEvent) {
-            events.push(fallbackEvent);
-            broadcastEvent(fallbackEvent);
+          const fallbackEvents = aiDecideAction(familyId, gameState);
+          if (fallbackEvents) {
+            for (const fe of fallbackEvents) {
+              events.push(fe);
+              broadcastEvent(fe);
+            }
           }
+          const covertFallback = aiDecideCovertOp(familyId, gameState);
+          for (const ce of covertFallback) { events.push(ce); broadcastEvent(ce); }
         }
       } catch (e) {
         console.error(`[next-turn] Error processing ${familyName}:`, e);
         // Fallback to mechanical AI for this family
-        const fallbackEvent = aiDecideAction(familyId, gameState);
-        if (fallbackEvent) {
-          events.push(fallbackEvent);
-          broadcastEvent(fallbackEvent);
+        const fallbackEvents = aiDecideAction(familyId, gameState);
+        if (fallbackEvents) {
+          for (const fe of fallbackEvents) {
+            events.push(fe);
+            broadcastEvent(fe);
+          }
         }
+        const covertFallback = aiDecideCovertOp(familyId, gameState);
+        for (const ce of covertFallback) { events.push(ce); broadcastEvent(ce); }
       }
     }
   } catch (e) {
@@ -580,11 +730,15 @@ async function processAITurnsLLM(broadcastEvent: (event: GameEvent) => void): Pr
     for (const familyId of aiFamilies) {
       const eliminated = getEliminatedFamilies(gameState);
       if (eliminated.includes(familyId)) continue;
-      const event = aiDecideAction(familyId, gameState);
-      if (event) {
-        events.push(event);
-        broadcastEvent(event);
+      const fallbackEvents = aiDecideAction(familyId, gameState);
+      if (fallbackEvents) {
+        for (const fe of fallbackEvents) {
+          events.push(fe);
+          broadcastEvent(fe);
+        }
       }
+      const covertFallback = aiDecideCovertOp(familyId, gameState);
+      for (const ce of covertFallback) { events.push(ce); broadcastEvent(ce); }
     }
   } finally {
     // Clean up bridge
@@ -609,6 +763,7 @@ async function processNextTurn(): Promise<{ events: GameEvent[]; winner: string 
   gameState.turn++;
   gameState.playerActed = false;
   gameState.playerMessaged = false;
+  gameState.playerCovertUsed = false;
   const turnEvents: GameEvent[] = [];
 
   // Helper to broadcast and collect events
@@ -616,11 +771,22 @@ async function processNextTurn(): Promise<{ events: GameEvent[]; winner: string 
     broadcast({ type: 'turn_event', event });
   };
 
+  // 0. Process expiring effects from previous turn
+  processActiveEffects(gameState);
+  processExpiredIntelAndFortifications(gameState);
+
   // 1. Economy phase
   const econEvents = processEconomy();
   turnEvents.push(...econEvents);
   for (const e of econEvents) {
     broadcastEvent(e);
+  }
+
+  // 2. City events (random events that affect gameplay)
+  const cityEvent = rollCityEvent(gameState);
+  if (cityEvent) {
+    turnEvents.push(cityEvent);
+    broadcastEvent(cityEvent);
   }
 
   // 2. AI actions (LLM-driven with fallback)
@@ -706,7 +872,17 @@ async function processNextTurn(): Promise<{ events: GameEvent[]; winner: string 
 
 // ── Player Actions ──
 
-type ActionResult = { success: boolean; message: string; events: GameEvent[] };
+type CombatData = {
+  attackerFamily: string;
+  defenderFamily: string | null;
+  targetName: string;
+  attackerMuscle: number;
+  defenderMuscle: number;
+  attackerLosses: number;
+  defenderLosses: number;
+  victory: boolean;
+};
+type ActionResult = { success: boolean; message: string; events: GameEvent[]; combatData?: CombatData };
 
 function playerHireMuscle(count: number, territoryId: string): ActionResult {
   const family = gameState.families[gameState.playerFamily!];
@@ -751,7 +927,38 @@ function playerAttack(fromTerritoryIds: string[], targetTerritoryId: string, mus
 
   if (totalMuscle <= 0) return { success: false, message: 'Must send at least 1 muscle.', events: [] };
 
-  const combat = resolveCombat(totalMuscle, target.muscle, target.business);
+  // Check for alliance betrayal
+  const betrayalEvents: GameEvent[] = [];
+  if (target.owner && areAllied(gameState, gameState.playerFamily!, target.owner)) {
+    const betrayalEvent = applyBetrayalPenalty(gameState, gameState.playerFamily!);
+    if (betrayalEvent) betrayalEvents.push(betrayalEvent);
+    // Break the alliance by adding a war declaration
+    gameState.diplomacy.push({
+      from: gameState.playerFamily!,
+      to: target.owner,
+      type: 'war',
+      turn: gameState.turn,
+    });
+  }
+
+  // Calculate extra defense from fortifications, turf war, and alliances
+  const defenderFamily = target.owner;
+  const defenderFamilyName = defenderFamily ? gameState.families[defenderFamily]?.name : null;
+  const defenderMuscle = target.muscle;
+  const playerExtraDefense = getFortificationBonus(gameState, target.id) + getTerritoryDefenseBonus(gameState, target.id) +
+    (target.owner ? getAllianceDefenseBonus(gameState, target.owner) : 0);
+  const combat = resolveCombat(totalMuscle, target.muscle, target.business, playerExtraDefense);
+
+  const combatData: CombatData = {
+    attackerFamily: family.name,
+    defenderFamily: defenderFamilyName || null,
+    targetName: target.name,
+    attackerMuscle: totalMuscle,
+    defenderMuscle,
+    attackerLosses: combat.attackerLosses,
+    defenderLosses: combat.defenderLosses,
+    victory: combat.success,
+  };
 
   // Remove sent muscle from source territories
   for (const src of sources) {
@@ -761,7 +968,7 @@ function playerAttack(fromTerritoryIds: string[], targetTerritoryId: string, mus
   // Apply defender losses
   target.muscle = Math.max(0, target.muscle - combat.defenderLosses);
 
-  const events: GameEvent[] = [];
+  const events: GameEvent[] = [...betrayalEvents];
   if (combat.success) {
     const prevOwner = target.owner;
     const totalDefenderLost = target.muscle + combat.defenderLosses; // all muscle lost (killed + captured)
@@ -818,7 +1025,7 @@ function playerAttack(fromTerritoryIds: string[], targetTerritoryId: string, mus
 
   gameState.events.push(...events);
   // Don't save here - let the action handler save after setting playerActed
-  return { success: true, message: events[0].result || events[0].details, events };
+  return { success: true, message: events[0].result || events[0].details, events, combatData };
 }
 
 function playerBusiness(territoryId: string, businessType: BusinessType): ActionResult {
@@ -908,7 +1115,38 @@ function playerSendMessage(toFamily: string, type: DiplomacyMessage['type'], tar
 const app = new Hono();
 app.use('*', cors());
 
-// Health check
+// ── Auth endpoints (public — no token required) ──
+
+app.get('/api/auth/status', (c) => c.json({ pinSet: isPinSet() }));
+
+app.post('/api/auth/setup', async (c) => {
+  const { pin } = await c.req.json();
+  const result = await setupPin(pin);
+  if (!result.success) return c.json({ error: result.error }, 400);
+  const token = createSession();
+  return c.json({ success: true, token });
+});
+
+app.post('/api/auth/verify', async (c) => {
+  const { pin } = await c.req.json();
+  const valid = await verifyPin(pin);
+  if (!valid) return c.json({ error: 'Incorrect PIN.' }, 401);
+  const token = createSession();
+  return c.json({ success: true, token });
+});
+
+// ── Auth middleware for all game endpoints ──
+
+app.use('/api/*', async (c, next) => {
+  // Auth endpoints are already handled above, skip them
+  const path = new URL(c.req.url).pathname;
+  if (path.startsWith('/api/auth/')) return next();
+
+  const authHeader = c.req.header('Authorization');
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!validateSession(token)) return c.json({ error: 'Unauthorised. Please refresh and enter your PIN.' }, 401);
+  return next();
+});
 app.get('/api/health', (c) => c.json({ status: 'ok', turn: gameState.turn }));
 
 // Get game state
@@ -943,9 +1181,9 @@ app.post('/api/next-turn', async (c) => {
   try {
     const result = await processNextTurn();
 
-    // Events already broadcast in real-time during processing
-    broadcast({ type: 'turn_complete', turn: gameState.turn, winner: result.winner });
+    // Broadcast state BEFORE turn_complete so client has fresh state when modal closes
     broadcast({ type: 'state_update', state: gameState });
+    broadcast({ type: 'turn_complete', turn: gameState.turn, winner: result.winner });
     return c.json({ success: true, turn: gameState.turn, events: result.events, winner: result.winner });
   } catch (e) {
     console.error('[api/next-turn] Error:', e);
@@ -1009,6 +1247,47 @@ app.post('/api/action', async (c) => {
 });
 
 // Reset game
+// Covert operation (spy, sabotage, bribe, fortify)
+app.post('/api/covert', async (c) => {
+  if (gameState.phase !== 'playing') return c.json({ error: 'Game is not in progress.' }, 400);
+  if (!gameState.playerFamily) return c.json({ error: 'No player family selected.' }, 400);
+  if (gameState.playerCovertUsed) return c.json({ error: 'Already used covert op this turn.' }, 400);
+
+  const body = await c.req.json();
+  const { type, target } = body as { type: CovertOpType; target: string };
+
+  if (!['spy', 'sabotage', 'bribe', 'fortify'].includes(type)) {
+    return c.json({ error: 'Invalid covert op type.' }, 400);
+  }
+
+  let result: { success: boolean; event: GameEvent };
+
+  switch (type) {
+    case 'spy':
+      if (!target || !gameState.families[target]) return c.json({ error: 'Invalid target family.' }, 400);
+      result = executeSpy(gameState, gameState.playerFamily, target);
+      break;
+    case 'sabotage':
+      result = executeSabotage(gameState, gameState.playerFamily, target);
+      break;
+    case 'bribe':
+      result = executeBribe(gameState, gameState.playerFamily, target);
+      break;
+    case 'fortify':
+      result = executeFortify(gameState, gameState.playerFamily, target);
+      break;
+    default:
+      return c.json({ error: 'Invalid covert op type.' }, 400);
+  }
+
+  gameState.playerCovertUsed = true;
+  gameState.events.push(result.event);
+  updateMuscleTotals();
+  saveState();
+  broadcast({ type: 'state_update', state: gameState });
+  return c.json({ success: result.success, message: result.event.details, events: [result.event] });
+});
+
 app.post('/api/reset', async (c) => {
   gameState = createInitialState();
   saveState();
@@ -1071,6 +1350,10 @@ const server = Bun.serve({
 
     // Browser WebSocket upgrade
     if (url.pathname === '/ws') {
+      const token = url.searchParams.get('token');
+      if (!validateSession(token)) {
+        return new Response('Unauthorised', { status: 401 });
+      }
       const sessionId = url.searchParams.get('session') || crypto.randomUUID();
       if (server.upgrade(req, { data: { sessionId, type: 'browser' } })) return;
       return new Response('WebSocket upgrade failed', { status: 500 });

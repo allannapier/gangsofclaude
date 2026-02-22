@@ -2,12 +2,35 @@ import { useEffect } from 'react';
 import { useGameStore } from './store';
 import { FamilySelect } from './components/FamilySelect';
 import { GameBoard } from './components/GameBoard';
+import { AttackResultModal } from './components/AttackResultModal';
+import { PinScreen } from './components/PinScreen';
 import { FAMILY_COLORS } from './types';
 
 export default function App() {
-  const { connect, state, connected } = useGameStore();
+  const { connect, state, connected, authStatus, checkAuth, completeAuth } = useGameStore();
 
-  useEffect(() => { connect(); return () => { /* cleanup handled by StrictMode guard in connect() */ }; }, [connect]);
+  useEffect(() => { checkAuth(); }, [checkAuth]);
+  useEffect(() => {
+    if (authStatus === 'authenticated') {
+      connect();
+      return () => { /* cleanup handled by StrictMode guard in connect() */ };
+    }
+  }, [authStatus, connect]);
+
+  // PIN screens (before game loads)
+  if (authStatus === 'checking') {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+        <div className="text-zinc-500 text-sm animate-pulse">Loading…</div>
+      </div>
+    );
+  }
+  if (authStatus === 'setup-required') {
+    return <PinScreen mode="setup" onSuccess={() => {}} onSetupComplete={completeAuth} onVerifyComplete={completeAuth} />;
+  }
+  if (authStatus === 'verify-required') {
+    return <PinScreen mode="verify" onSuccess={() => {}} onSetupComplete={completeAuth} onVerifyComplete={completeAuth} />;
+  }
 
   const playerColor = state.playerFamily ? FAMILY_COLORS[state.playerFamily] : '#888';
 
@@ -22,7 +45,7 @@ export default function App() {
       {/* Header */}
       <header className="relative z-10 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-sm px-3 py-2 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <img src="/gangsofclaude_icon.png" alt="Gangs of Claude" className="w-8 h-8 rounded" />
+          <img src="/gangsofclaude_icon.png" alt="Gangs of Claude" className="w-14 h-8 object-contain rounded" />
           <h1 className="text-lg font-bold tracking-wide hidden sm:block">GANGS OF CLAUDE</h1>
           <h1 className="text-lg font-bold tracking-wide sm:hidden">GoC</h1>
           {state.phase === 'playing' && state.playerFamily && (
@@ -47,6 +70,9 @@ export default function App() {
         {state.phase === 'setup' && <FamilySelect />}
         {(state.phase === 'playing' || state.phase === 'ended') && <GameBoard />}
       </main>
+
+      {/* Attack Result Modal (cinematic overlay) */}
+      <AttackResultModal />
     </div>
   );
 }

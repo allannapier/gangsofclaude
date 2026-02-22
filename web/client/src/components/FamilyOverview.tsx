@@ -120,6 +120,20 @@ export function FamilyOverview({ compact }: { compact?: boolean }) {
                   <span>Income</span>
                   <span className="text-green-400">+${income - upkeep}/turn</span>
                 </div>
+                {/* Alliance indicators */}
+                {state.diplomacy
+                  .filter(d => d.type === 'partnership' && d.status === 'accepted' && (d.from === fid || d.to === fid))
+                  .filter(d => !state.diplomacy.some(w => w.type === 'war' && w.turn > d.turn && ((w.from === d.from && w.to === d.to) || (w.from === d.to && w.to === d.from))))
+                  .map((d, i) => {
+                    const partner = d.from === fid ? d.to : d.from;
+                    return (
+                      <div key={`alliance-${i}`} className="flex items-center gap-1 text-cyan-400">
+                        <span>🤝</span>
+                        <span>{state.families[partner]?.name}</span>
+                      </div>
+                    );
+                  })
+                }
               </div>
             )}
           </div>

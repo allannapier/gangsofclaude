@@ -2,9 +2,44 @@ import { create } from 'zustand';
 import type { SaveState, GameEvent } from '../types';
 
 const API_BASE = `http://${window.location.hostname}:3456`;
-const WS_URL = `ws://${window.location.hostname}:3456/ws`;
+const TOKEN_KEY = 'gangs-of-claude-token';
+
+function getStoredToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+function storeToken(token: string) {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getStoredToken();
+  return token ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } : { 'Content-Type': 'application/json' };
+}
+
+function buildWsUrl(): string {
+  const token = getStoredToken();
+  const base = `ws://${window.location.hostname}:3456/ws`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
+export interface AttackModalData {
+  attackerFamily: string;
+  defenderFamily: string | null;
+  targetName: string;
+  attackerMuscle: number;
+  defenderMuscle: number;
+  attackerLosses: number;
+  defenderLosses: number;
+  victory: boolean;
+}
 
 interface GameStore {
+  // Auth
+  authStatus: 'checking' | 'setup-required' | 'verify-required' | 'authenticated';
+  checkAuth: () => Promise<void>;
+  completeAuth: (token: string) => void;
+
   // Connection
   connected: boolean;
   ws: WebSocket | null;
@@ -19,6 +54,7 @@ interface GameStore {
   isProcessingTurn: boolean;
   actionResult: { success: boolean; message: string } | null;
   showTurnModal: boolean;
+  attackModal: AttackModalData | null;
 
   // Actions
   connect: () => void;
@@ -30,9 +66,11 @@ interface GameStore {
   setSelectedAction: (action: string | null, territoryId?: string | null) => void;
   dismissActionResult: () => void;
   dismissTurnModal: () => void;
+  dismissAttackModal: () => void;
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
+  authStatus: 'checking',
   connected: false,
   ws: null,
   state: {
@@ -41,11 +79,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
     playerFamily: null,
     playerActed: false,
     playerMessaged: false,
+    playerCovertUsed: false,
     winner: null,
     families: {},
     territories: [],
     diplomacy: [],
     events: [],
+    activeEffects: [],
+    intel: [],
+    fortifications: [],
   },
   selectedAction: null,
   selectedTerritoryId: null,
@@ -53,6 +95,42 @@ export const useGameStore = create<GameStore>((set, get) => ({
   isProcessingTurn: false,
   actionResult: null,
   showTurnModal: false,
+  attackModal: null,
+
+  checkAuth: async () => {
+    const token = getStoredToken();
+    if (token) {
+      // Validate stored token is still accepted (server may have restarted)
+      try {
+        const res = await fetch(`${API_BASE}/api/state`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          set({ authStatus: 'authenticated' });
+          return;
+        }
+      } catch {
+        // Server unreachable — keep token and try authenticated anyway
+        set({ authStatus: 'authenticated' });
+        return;
+      }
+      // Token rejected — clear it and ask for PIN
+      localStorage.removeItem(TOKEN_KEY);
+    }
+    // No token — check whether a PIN has been configured yet
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/status`);
+      const data = await res.json();
+      set({ authStatus: data.pinSet ? 'verify-required' : 'setup-required' });
+    } catch {
+      set({ authStatus: 'verify-required' });
+    }
+  },
+
+  completeAuth: (token: string) => {
+    storeToken(token);
+    set({ authStatus: 'authenticated' });
+  },
 
   connect: () => {
     // Guard against duplicate connections (React StrictMode calls effects twice)
@@ -60,7 +138,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (existing && existing.readyState !== WebSocket.CLOSED) {
       return;
     }
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(buildWsUrl());
     // Store immediately to prevent duplicate connections from StrictMode
     set({ ws });
     ws.onopen = () => {
@@ -89,8 +167,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     ws.onclose = () => {
       console.log('[WS] Disconnected');
       set({ connected: false, ws: null });
-      // Reconnect after 2s
-      setTimeout(() => get().connect(), 2000);
+      // Only reconnect if still authenticated (avoid reconnect loop if token invalid)
+      if (get().authStatus === 'authenticated') {
+        setTimeout(() => get().connect(), 2000);
+      }
     };
     ws.onerror = () => ws.close();
   },
@@ -103,7 +183,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   startGame: async (familyId) => {
     const res = await fetch(`${API_BASE}/api/start`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ familyId }),
     });
     const data = await res.json();
@@ -115,7 +195,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     try {
       // Fire the API call — events stream in real-time via WebSocket
       // The response arrives when all AI families have acted (may take 30-60s)
-      const res = await fetch(`${API_BASE}/api/next-turn`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/api/next-turn`, { method: 'POST', headers: authHeaders() });
       const data = await res.json();
       // HTTP response arrives after all processing; WebSocket already streamed events
       // Ensure final state is synced
@@ -139,20 +219,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
   performAction: async (action, params) => {
     const res = await fetch(`${API_BASE}/api/action`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ action, ...params }),
     });
     const data = await res.json();
     const result = { success: data.success ?? false, message: data.message || data.error || 'Unknown error' };
-    set({ actionResult: result });
+    // Show cinematic modal for attacks, toast for everything else
+    if (action === 'attack' && data.combatData) {
+      set({ attackModal: data.combatData, actionResult: null });
+    } else {
+      set({ actionResult: result });
+    }
     return result;
   },
 
   resetGame: async () => {
-    await fetch(`${API_BASE}/api/reset`, { method: 'POST' });
+    await fetch(`${API_BASE}/api/reset`, { method: 'POST', headers: authHeaders() });
   },
 
   setSelectedAction: (action, territoryId) => set({ selectedAction: action, selectedTerritoryId: territoryId ?? null, actionResult: null }),
   dismissActionResult: () => set({ actionResult: null }),
+  dismissAttackModal: () => set({ attackModal: null }),
   dismissTurnModal: () => set({ showTurnModal: false, turnEvents: [] }),
 }));

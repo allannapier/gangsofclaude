@@ -1,7 +1,43 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useGameStore } from '../store';
-import { FAMILY_COLORS, DIPLOMACY_LABELS, BUSINESS_DEFINITIONS, type DiplomacyType, type BusinessType, type Territory } from '../types';
+import { FAMILY_COLORS, DIPLOMACY_LABELS, BUSINESS_DEFINITIONS, COVERT_OP_DEFINITIONS, type DiplomacyType, type BusinessType, type Territory, type CovertOpType, type SaveState } from '../types';
 import { ActionIcon, MuscleIcon, UpgradeIcon, MoveIcon, MessageIcon, NewGameIcon } from './Icons';
+
+function ActionToast({ result, onDismiss }: { result: { success: boolean; message: string }; onDismiss: () => void }) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    // Slide in
+    requestAnimationFrame(() => setVisible(true));
+    // Auto-dismiss after 4s
+    const timer = setTimeout(() => {
+      setVisible(false);
+      setTimeout(onDismiss, 300);
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [onDismiss]);
+
+  return (
+    <div
+      className={`fixed top-16 right-4 z-50 max-w-sm transition-all duration-300 ${
+        visible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
+      }`}
+    >
+      <div className={`flex items-start gap-3 px-4 py-3 rounded-lg shadow-xl border backdrop-blur-sm ${
+        result.success
+          ? 'bg-green-950/90 border-green-700 text-green-200'
+          : 'bg-red-950/90 border-red-700 text-red-200'
+      }`}>
+        <span className="text-lg mt-0.5">{result.success ? '✅' : '❌'}</span>
+        <p className="flex-1 text-sm">{result.message}</p>
+        <button
+          onClick={() => { setVisible(false); setTimeout(onDismiss, 300); }}
+          className="text-zinc-400 hover:text-white text-lg leading-none"
+        >×</button>
+      </div>
+    </div>
+  );
+}
 
 export function ActionPanel() {
   const { state, nextTurn, performAction, isProcessingTurn, actionResult, dismissActionResult, selectedAction, setSelectedAction, resetGame } = useGameStore();
@@ -42,15 +78,8 @@ export function ActionPanel() {
         </div>
       </div>
 
-      {/* Action Result Toast */}
-      {actionResult && (
-        <div
-          className={`p-2 rounded text-sm ${actionResult.success ? 'bg-green-900/50 border border-green-700' : 'bg-red-900/50 border border-red-700'}`}
-        >
-          {actionResult.message}
-          <button onClick={dismissActionResult} className="ml-2 text-zinc-400 hover:text-white">✕</button>
-        </div>
-      )}
+      {/* Floating Action Result Toast */}
+      {actionResult && <ActionToast result={actionResult} onDismiss={dismissActionResult} />}
 
       {/* Action Buttons — message (diplomacy) is free, like AI diplomacy */}
       {state.playerActed && state.playerMessaged && (
@@ -124,6 +153,30 @@ export function ActionPanel() {
       {selectedAction === 'business' && <BusinessForm myTerritories={myTerritories} />}
       {selectedAction === 'move' && <MoveForm myTerritories={myTerritories} />}
       {selectedAction === 'message' && <MessageForm playerFamily={playerFamily} families={state.families} />}
+      {selectedAction === 'covert' && <CovertOpsForm playerFamily={playerFamily} families={state.families} myTerritories={myTerritories} enemyTerritories={enemyTerritories} />}
+
+      {/* Covert Ops Section */}
+      <div className="border-t border-zinc-800 pt-3 mt-1">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wide">🕵️ Covert Ops <span className="text-zinc-600">(free action)</span></span>
+        </div>
+        <button
+          onClick={() => setSelectedAction(selectedAction === 'covert' ? null : 'covert')}
+          disabled={state.playerCovertUsed}
+          className={`px-3 py-1 rounded text-sm border transition-colors ${
+            state.playerCovertUsed
+              ? 'bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed'
+              : selectedAction === 'covert'
+              ? 'bg-zinc-700 border-zinc-500 text-white'
+              : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500'
+          }`}
+        >
+          {state.playerCovertUsed ? '✅ Covert op used' : '🕵️ Launch Operation'}
+        </button>
+      </div>
+
+      {/* Compact status indicators — inline badges to save space */}
+      <StatusIndicators state={state} />
     </div>
   );
 }
@@ -158,9 +211,16 @@ function AttackForm({ myTerritories, enemyTerritories }: { myTerritories: any[];
   const { performAction, setSelectedAction, state, selectedTerritoryId } = useGameStore();
   const initialTarget = enemyTerritories.find(t => t.id === selectedTerritoryId)?.id || enemyTerritories[0]?.id || '';
   const [targetId, setTargetId] = useState(initialTarget);
-  const [muscleAmounts, setMuscleAmounts] = useState<Record<string, number>>({});
+  // Store as strings to prevent controlled input fighting with DOM during re-renders
+  const [muscleInputs, setMuscleInputs] = useState<Record<string, string>>({});
 
-  const totalSending = Object.values(muscleAmounts).reduce((s, v) => s + v, 0);
+  const parsedAmounts: Record<string, number> = {};
+  for (const t of myTerritories) {
+    const raw = muscleInputs[t.id];
+    if (raw === undefined || raw === '') { parsedAmounts[t.id] = 0; continue; }
+    parsedAmounts[t.id] = Math.min(parseInt(raw, 10) || 0, t.muscle);
+  }
+  const totalSending = Object.values(parsedAmounts).reduce((s, v) => s + v, 0);
 
   return (
     <div className="space-y-2 p-3 bg-zinc-900 rounded border border-zinc-700">
@@ -183,12 +243,16 @@ function AttackForm({ myTerritories, enemyTerritories }: { myTerritories: any[];
             type="text"
             inputMode="numeric"
             pattern="[0-9]*"
-            value={muscleAmounts[t.id] ?? ''}
+            value={muscleInputs[t.id] ?? ''}
             placeholder="0"
             onChange={(e) => {
               const raw = e.target.value.replace(/[^0-9]/g, '');
-              if (raw === '') { setMuscleAmounts({ ...muscleAmounts, [t.id]: 0 }); return; }
-              setMuscleAmounts({ ...muscleAmounts, [t.id]: Math.min(parseInt(raw, 10), t.muscle) });
+              setMuscleInputs({ ...muscleInputs, [t.id]: raw });
+            }}
+            onBlur={() => {
+              const val = parseInt(muscleInputs[t.id] || '0', 10);
+              const clamped = Math.min(Math.max(0, val || 0), t.muscle);
+              setMuscleInputs({ ...muscleInputs, [t.id]: clamped > 0 ? String(clamped) : '' });
             }}
             className="w-16 bg-zinc-800 rounded px-2 py-1 text-sm border border-zinc-700 text-center"
           />
@@ -197,7 +261,11 @@ function AttackForm({ myTerritories, enemyTerritories }: { myTerritories: any[];
       <div className="text-sm text-zinc-300 inline-flex items-center gap-1">Total attacking: <MuscleIcon size={14} /> {totalSending}</div>
       <button
         onClick={async () => {
-          await performAction('attack', { targetTerritoryId: targetId, musclePerTerritory: muscleAmounts, fromTerritoryIds: Object.keys(muscleAmounts) });
+          const musclePerTerritory: Record<string, number> = {};
+          for (const [tid, val] of Object.entries(parsedAmounts)) {
+            if (val > 0) musclePerTerritory[tid] = val;
+          }
+          await performAction('attack', { targetTerritoryId: targetId, musclePerTerritory, fromTerritoryIds: Object.keys(musclePerTerritory) });
           setSelectedAction(null);
         }}
         disabled={totalSending <= 0}
@@ -392,6 +460,115 @@ function MessageForm({ playerFamily, families }: { playerFamily: string; familie
   );
 }
 
+function CovertOpsForm({ playerFamily, families, myTerritories, enemyTerritories }: { playerFamily: string; families: Record<string, any>; myTerritories: Territory[]; enemyTerritories: Territory[] }) {
+  const { setSelectedAction, state } = useGameStore();
+  const [opType, setOpType] = useState<CovertOpType>('spy');
+  const [target, setTarget] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const opDef = COVERT_OP_DEFINITIONS[opType];
+  const playerWealth = state.families[playerFamily]?.wealth || 0;
+  const canAfford = playerWealth >= opDef.cost;
+
+  const otherFamilies = Object.keys(families).filter(f => f !== playerFamily && state.territories.some(t => t.owner === f));
+  const otherTerritories = state.territories.filter(t => t.owner && t.owner !== playerFamily);
+
+  // Set default target based on op type
+  const needsFamilyTarget = opType === 'spy';
+  const needsEnemyTerritory = opType === 'sabotage' || opType === 'bribe';
+  const needsOwnTerritory = opType === 'fortify';
+
+  const handleSubmit = async () => {
+    setIsSubmitting(true);
+    try {
+      const API_BASE = `http://${window.location.hostname}:3456`;
+      // Resolve target: use state value or fall back to first valid option (select may not fire onChange for default)
+      const resolvedTarget = target
+        || (needsFamilyTarget ? otherFamilies[0] : '')
+        || (needsEnemyTerritory ? otherTerritories[0]?.id : '')
+        || (needsOwnTerritory ? myTerritories[0]?.id : '')
+        || '';
+      const res = await fetch(`${API_BASE}/api/covert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: opType, target: resolvedTarget }),
+      });
+      const data = await res.json();
+      useGameStore.setState({
+        actionResult: { success: data.success, message: data.message || data.error || 'Operation complete' },
+      });
+      setSelectedAction(null);
+    } catch (e) {
+      useGameStore.setState({ actionResult: { success: false, message: `Network error: ${e}` } });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 p-3 bg-zinc-900 rounded border border-zinc-700">
+      <div className="text-sm text-zinc-400">Launch a covert operation (free, once per turn)</div>
+      
+      <div>
+        <label className="text-xs text-zinc-500 block mb-1">Operation</label>
+        <select
+          value={opType}
+          onChange={(e) => { setOpType(e.target.value as CovertOpType); setTarget(''); }}
+          className="w-full bg-zinc-800 rounded px-2 py-1.5 text-sm border border-zinc-700"
+        >
+          {(Object.keys(COVERT_OP_DEFINITIONS) as CovertOpType[]).map(op => {
+            const def = COVERT_OP_DEFINITIONS[op];
+            return <option key={op} value={op}>{def.icon} {def.name} (${def.cost})</option>;
+          })}
+        </select>
+      </div>
+
+      <div className="text-xs text-zinc-500 p-2 bg-zinc-800/50 rounded">{opDef.description}</div>
+
+      {needsFamilyTarget && (
+        <div>
+          <label className="text-xs text-zinc-500 block mb-1">Target Family</label>
+          <select value={target || otherFamilies[0] || ''} onChange={(e) => setTarget(e.target.value)} className="w-full bg-zinc-800 rounded px-2 py-1.5 text-sm border border-zinc-700">
+            {otherFamilies.map(f => <option key={f} value={f}>{families[f]?.name}</option>)}
+          </select>
+        </div>
+      )}
+
+      {needsEnemyTerritory && (
+        <div>
+          <label className="text-xs text-zinc-500 block mb-1">Target Territory</label>
+          <select value={target || otherTerritories[0]?.id || ''} onChange={(e) => setTarget(e.target.value)} className="w-full bg-zinc-800 rounded px-2 py-1.5 text-sm border border-zinc-700">
+            {otherTerritories.map(t => (
+              <option key={t.id} value={t.id}>
+                {t.name} ({families[t.owner!]?.name}) — M{t.muscle} • {BUSINESS_DEFINITIONS[t.business]?.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {needsOwnTerritory && (
+        <div>
+          <label className="text-xs text-zinc-500 block mb-1">Your Territory</label>
+          <select value={target || myTerritories[0]?.id || ''} onChange={(e) => setTarget(e.target.value)} className="w-full bg-zinc-800 rounded px-2 py-1.5 text-sm border border-zinc-700">
+            {myTerritories.map(t => <option key={t.id} value={t.id}>{t.name} (M{t.muscle})</option>)}
+          </select>
+        </div>
+      )}
+
+      {!canAfford && <div className="text-xs text-red-400">Not enough wealth (need ${opDef.cost}, have ${playerWealth})</div>}
+
+      <button
+        onClick={handleSubmit}
+        disabled={!canAfford || isSubmitting}
+        className="w-full py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 rounded text-sm font-bold"
+      >
+        {isSubmitting ? 'Executing...' : `${opDef.icon} ${opDef.name} ($${opDef.cost})`}
+      </button>
+    </div>
+  );
+}
+
 function DiplomacyProposal({ message, messageIndex }: { message: any; messageIndex: number }) {
   const store = useGameStore();
   const { state } = store;
@@ -497,6 +674,82 @@ function DiplomacyProposal({ message, messageIndex }: { message: any; messageInd
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function StatusIndicators({ state }: { state: SaveState }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const activeEffects = state.activeEffects || [];
+  const activeIntel = (state.intel || []).filter(i => i.expiresTurn > state.turn);
+  const activeForts = (state.fortifications || []).filter(f => f.expiresTurn > state.turn);
+
+  const hasContent = activeEffects.length > 0 || activeIntel.length > 0 || activeForts.length > 0;
+  if (!hasContent) return null;
+
+  const toggle = (key: string) => setExpanded(expanded === key ? null : key);
+
+  return (
+    <div className="border-t border-zinc-800 pt-2 mt-1 flex flex-wrap gap-1.5">
+      {activeEffects.length > 0 && (
+        <div className="w-full">
+          <button onClick={() => toggle('effects')} className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1">
+            📰 Effects ({activeEffects.length}) <span className="text-zinc-600">{expanded === 'effects' ? '▾' : '▸'}</span>
+          </button>
+          {expanded === 'effects' && (
+            <div className="mt-1 space-y-1">
+              {activeEffects.map((effect) => (
+                <div key={effect.id} className="text-xs text-amber-300 bg-amber-900/20 border border-amber-800/30 rounded px-2 py-1">
+                  {effect.description} <span className="text-amber-600">({effect.turnsRemaining}t left)</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {activeIntel.length > 0 && (
+        <div className="w-full">
+          <button onClick={() => toggle('intel')} className="text-xs font-bold text-cyan-400 hover:text-cyan-300 flex items-center gap-1">
+            🕵️ Intel ({activeIntel.length}) <span className="text-zinc-600">{expanded === 'intel' ? '▾' : '▸'}</span>
+          </button>
+          {expanded === 'intel' && (
+            <div className="mt-1 space-y-1">
+              {activeIntel.map((report, idx) => (
+                <div key={idx} className="text-xs bg-cyan-900/20 border border-cyan-800/30 rounded p-2">
+                  <div className="font-bold text-cyan-300">
+                    {state.families[report.targetFamily]?.name} — ${report.wealth}
+                    <span className="text-cyan-600 ml-1">(T{report.expiresTurn})</span>
+                  </div>
+                  {report.territories.map(t => (
+                    <div key={t.id} className="text-cyan-400/80 ml-2">
+                      {t.name}: M{t.muscle} • {BUSINESS_DEFINITIONS[t.business]?.name || t.business}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {activeForts.length > 0 && (
+        <div className="w-full">
+          <button onClick={() => toggle('forts')} className="text-xs font-bold text-green-400 hover:text-green-300 flex items-center gap-1">
+            🔒 Fortifications ({activeForts.length}) <span className="text-zinc-600">{expanded === 'forts' ? '▾' : '▸'}</span>
+          </button>
+          {expanded === 'forts' && (
+            <div className="mt-1 space-y-1">
+              {activeForts.map((fort, idx) => {
+                const terr = state.territories.find(t => t.id === fort.territoryId);
+                return (
+                  <div key={idx} className="text-xs text-green-300 bg-green-900/20 border border-green-800/30 rounded px-2 py-1">
+                    {terr?.name || fort.territoryId}: +{fort.bonusDefense} def <span className="text-green-600">(T{fort.expiresTurn})</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

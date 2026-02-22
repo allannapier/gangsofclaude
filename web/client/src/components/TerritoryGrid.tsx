@@ -71,6 +71,24 @@ export function TerritoryGrid({ onActionSelected }: TerritoryGridProps) {
                 <span title="Business type" className="flex items-center gap-0.5"><LevelIcon size={12} /> {BUSINESS_DEFINITIONS[t.business].name}</span>
                 <span title="Income per turn" className="text-green-400">${territoryIncome(t.business)}</span>
               </div>
+              {/* Status indicators */}
+              <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                {state.fortifications?.filter(f => f.territoryId === t.id && f.expiresTurn > state.turn).map((f, i) => (
+                  <span key={`fort-${i}`} className="text-[10px] bg-green-900/40 text-green-400 px-1 rounded" title={`+${f.bonusDefense} defense until turn ${f.expiresTurn}`}>
+                    🔒+{f.bonusDefense}
+                  </span>
+                ))}
+                {state.activeEffects?.filter(e => e.targetTerritory === t.id && e.type === 'police_crackdown').map((e, i) => (
+                  <span key={`crack-${i}`} className="text-[10px] bg-red-900/40 text-red-400 px-1 rounded" title={`Police crackdown — ${e.turnsRemaining} turns`}>
+                    🚔
+                  </span>
+                ))}
+                {state.activeEffects?.filter(e => e.targetTerritory === t.id && e.type === 'turf_war').map((e, i) => (
+                  <span key={`turf-${i}`} className="text-[10px] bg-orange-900/40 text-orange-400 px-1 rounded" title={`Turf war defense bonus — ${e.turnsRemaining} turns`}>
+                    🔥+2
+                  </span>
+                ))}
+              </div>
             </button>
           );
         })}
