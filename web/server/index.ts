@@ -33,6 +33,7 @@ import {
   executeBribe,
   executeFortify,
   MUSCLE_HIRE_COST,
+  MAX_HIRE_PER_TURN,
   BUSINESS_DEFINITIONS,
   COVERT_OP_DEFINITIONS,
   type SaveState,
@@ -287,7 +288,12 @@ function aiDecideCovertOp(familyId: string, state: SaveState): GameEvent[] {
   return [];
 }
 
-function executeAIAttack(state: SaveState, familyId: string, target: Territory): GameEvent[] {
+function executeAIAttack(
+  state: SaveState,
+  familyId: string,
+  target: Territory,
+  requestedMusclePerTerritory?: Record<string, number>
+): GameEvent[] {
   const family = state.families[familyId];
   const myTerritories = state.territories.filter(t => t.owner === familyId && t.muscle > 0);
   const events: GameEvent[] = [];
@@ -299,15 +305,33 @@ function executeAIAttack(state: SaveState, familyId: string, target: Territory):
     state.diplomacy.push({ from: familyId, to: target.owner, type: 'war', turn: state.turn });
   }
 
-  // Send muscle from territories with the most muscle (leave at least 1 per territory)
+  // Build attack force. If the LLM provided per-territory amounts, use them.
+  // Otherwise, default to a full-force attack from all owned territories.
   let muscleToSend = 0;
   const muscleSource: { territory: Territory; amount: number }[] = [];
-  for (const t of myTerritories.sort((a, b) => b.muscle - a.muscle)) {
-    const available = t.muscle - 1;
-    if (available > 0 && muscleToSend < 5) {
-      const send = Math.min(available, 5 - muscleToSend);
-      muscleSource.push({ territory: t, amount: send });
+
+  const requestedEntries = Object.entries(requestedMusclePerTerritory || {});
+  if (requestedEntries.length > 0) {
+    for (const [territoryId, rawAmount] of requestedEntries) {
+      const amount = Math.floor(Number(rawAmount));
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+
+      const sourceTerritory = myTerritories.find(t => t.id === territoryId);
+      if (!sourceTerritory) continue;
+
+      const send = Math.min(amount, sourceTerritory.muscle);
+      if (send <= 0) continue;
+
+      muscleSource.push({ territory: sourceTerritory, amount: send });
       muscleToSend += send;
+    }
+  }
+
+  if (muscleToSend <= 0) {
+    for (const t of myTerritories) {
+      if (t.muscle <= 0) continue;
+      muscleSource.push({ territory: t, amount: t.muscle });
+      muscleToSend += t.muscle;
     }
   }
 
@@ -391,9 +415,14 @@ function executeAIClaim(state: SaveState, familyId: string, unclaimed: Territory
   };
 }
 
-function executeAIHire(state: SaveState, familyId: string): GameEvent {
+function executeAIHire(state: SaveState, familyId: string, requestedCount?: number): GameEvent {
   const family = state.families[familyId];
-  const count = Math.min(3, Math.floor(family.wealth / MUSCLE_HIRE_COST));
+  const maxAffordable = Math.min(MAX_HIRE_PER_TURN, Math.floor(family.wealth / MUSCLE_HIRE_COST));
+  const hasRequestedCount = Number.isInteger(requestedCount) && requestedCount !== undefined && requestedCount > 0;
+  const desiredCount = hasRequestedCount
+    ? Math.min(requestedCount, MAX_HIRE_PER_TURN)
+    : maxAffordable;
+  const count = Math.min(desiredCount, maxAffordable);
   if (count <= 0) return { turn: state.turn, actor: family.name, action: 'wait', details: `${family.name} can't afford muscle.` };
 
   family.wealth -= count * MUSCLE_HIRE_COST;
@@ -482,7 +511,7 @@ function executeAIAction(familyId: string, action: AIAction): GameEvent[] {
       if (!target || target.owner === familyId || target.owner === null) {
         return [{ turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} targeted invalid territory.${tauntSuffix}` }];
       }
-      const attackEvents = executeAIAttack(gameState, familyId, target);
+      const attackEvents = executeAIAttack(gameState, familyId, target, action.musclePerTerritory);
       // Override last event's details with reasoning
       if (attackEvents.length > 0) {
         const last = attackEvents[attackEvents.length - 1];
@@ -506,7 +535,7 @@ function executeAIAction(familyId: string, action: AIAction): GameEvent[] {
       if (family.wealth < MUSCLE_HIRE_COST) {
         return [{ turn: gameState.turn, actor: family.name, action: 'wait', details: `${family.name} wanted to hire but can't afford it.${tauntSuffix}` }];
       }
-      const result = executeAIHire(gameState, familyId);
+      const result = executeAIHire(gameState, familyId, action.count);
       return [{ ...result, details: `${result.details} ${action.reasoning}${tauntSuffix}` }];
     }
 
@@ -889,17 +918,22 @@ function playerHireMuscle(count: number, territoryId: string): ActionResult {
   const territory = gameState.territories.find(t => t.id === territoryId && t.owner === gameState.playerFamily);
   if (!territory) return { success: false, message: 'You do not own that territory.', events: [] };
 
-  const cost = count * MUSCLE_HIRE_COST;
+  const hireCount = Number(count);
+  if (!Number.isInteger(hireCount) || hireCount < 1 || hireCount > MAX_HIRE_PER_TURN) {
+    return { success: false, message: `Hire count must be an integer between 1 and ${MAX_HIRE_PER_TURN}.`, events: [] };
+  }
+
+  const cost = hireCount * MUSCLE_HIRE_COST;
   if (family.wealth < cost) return { success: false, message: `Not enough wealth. Need $${cost}, have $${family.wealth}.`, events: [] };
 
   family.wealth -= cost;
-  territory.muscle += count;
+  territory.muscle += hireCount;
   updateMuscleTotals();
   const event: GameEvent = {
     turn: gameState.turn,
     actor: family.name,
     action: 'hire',
-    details: `Hired ${count} muscle for $${cost}, stationed at ${territory.name}.`,
+    details: `Hired ${hireCount} muscle for $${cost}, stationed at ${territory.name}.`,
   };
   gameState.events.push(event);
   // Don't save here - let the action handler save after setting playerActed
@@ -1216,7 +1250,7 @@ app.post('/api/action', async (c) => {
 
   switch (action) {
     case 'hire':
-      result = playerHireMuscle(body.count || 1, body.territoryId);
+      result = playerHireMuscle(body.count ?? 1, body.territoryId);
       break;
     case 'attack':
       result = playerAttack(body.fromTerritoryIds || [], body.targetTerritoryId, body.musclePerTerritory || {});

@@ -8,6 +8,7 @@ import {
   calculateFamilyIncome,
   calculateUpkeepCost,
   MUSCLE_HIRE_COST,
+  MAX_HIRE_PER_TURN,
   BUSINESS_DEFINITIONS,
   COVERT_OP_DEFINITIONS,
   canUpgradeBusiness,
@@ -18,6 +19,11 @@ import {
   getTerritoryDefenseBonus,
   isTerritoryCrackdown,
 } from './mechanics';
+
+const RECENT_EVENT_TURN_WINDOW = 3;
+const RECENT_EVENT_MAX_ENTRIES = 20;
+const RECENT_DIPLOMACY_TURN_WINDOW = 5;
+const RECENT_DIPLOMACY_MAX_ENTRIES = 20;
 
 // Family personality descriptions embedded in prompts
 const FAMILY_PERSONALITIES: Record<string, string> = {
@@ -69,6 +75,8 @@ You rule through loyalty and measured strength. You don't start wars — you fin
 export interface AIAction {
   action: 'attack' | 'claim' | 'hire' | 'business' | 'wait';
   target?: string; // territory_id
+  count?: number; // for hire action
+  musclePerTerritory?: Record<string, number>; // for attack action
   business?: BusinessType; // for business action
   reasoning: string;
   diplomacy?: {
@@ -115,13 +123,14 @@ export function buildFamilyPrompt(familyId: string, state: SaveState): string {
     .join('\n');
 
   // Enemy territories
-  const enemyTerritories = state.territories
-    .filter(t => t.owner !== null && t.owner !== familyId)
+  const enemyTerritoriesList = state.territories
+    .filter(t => t.owner !== null && t.owner !== familyId);
+  const enemyTerritories = enemyTerritoriesList
     .map(t => {
       const ownerName = state.families[t.owner!]?.name || t.owner;
       return `  - ${t.name} (${t.id}): Owner=${ownerName}, ${BUSINESS_DEFINITIONS[t.business]?.name || t.business}, ${t.muscle} muscle`;
     })
-    .join('\n');
+    .join('\n') || '  (none)';
 
   // Unclaimed territories
   const unclaimed = state.territories.filter(t => t.owner === null);
@@ -129,16 +138,17 @@ export function buildFamilyPrompt(familyId: string, state: SaveState): string {
     ? unclaimed.map(t => `  - ${t.name} (${t.id})`).join('\n')
     : '  (none)';
 
-  // Recent events (last 2 turns)
+  // Recent events across all actors (all families + city + economy)
   const recentEvents = state.events
-    .filter(e => e.turn >= state.turn - 2 && e.turn < state.turn)
-    .slice(-10)
+    .filter(e => e.turn >= state.turn - RECENT_EVENT_TURN_WINDOW && e.turn < state.turn)
+    .slice(-RECENT_EVENT_MAX_ENTRIES)
     .map(e => `  - Turn ${e.turn}: ${e.actor} — ${e.action}: ${e.details}${e.result ? ' → ' + e.result : ''}`)
     .join('\n') || '  (none)';
 
   // Diplomacy messages to/from this family
   const recentDiplomacy = state.diplomacy
-    .filter(d => (d.to === familyId || d.from === familyId) && d.turn >= state.turn - 3)
+    .filter(d => (d.to === familyId || d.from === familyId) && d.turn >= state.turn - RECENT_DIPLOMACY_TURN_WINDOW)
+    .slice(-RECENT_DIPLOMACY_MAX_ENTRIES)
     .map(d => {
       let statusStr = '';
       if (d.status === 'accepted') statusStr = ' ✅ ACCEPTED';
@@ -179,7 +189,7 @@ export function buildFamilyPrompt(familyId: string, state: SaveState): string {
 
   // Available actions
   const canHire = family.wealth >= MUSCLE_HIRE_COST;
-  const hireMax = Math.min(3, Math.floor(family.wealth / MUSCLE_HIRE_COST));
+  const hireMax = Math.min(MAX_HIRE_PER_TURN, Math.floor(family.wealth / MUSCLE_HIRE_COST));
   
   // Check which businesses can be upgraded to
   const businessUpgrades: Array<{ territory: Territory; businesses: BusinessType[] }> = [];
@@ -196,7 +206,7 @@ export function buildFamilyPrompt(familyId: string, state: SaveState): string {
   }
   const canUpgradeBusiness_check = businessUpgrades.length > 0;
   
-  const canAttack = totalMuscle >= 3; // need at least some spare muscle
+  const canAttack = enemyTerritoriesList.length > 0 && totalMuscle >= 1;
   const canClaim = unclaimed.length > 0 && totalMuscle >= 2;
 
   // Other family IDs for diplomacy
@@ -229,10 +239,10 @@ ${enemyTerritories}
 ### Unclaimed Territories
 ${unclaimedList}
 
-### Recent Events (last 2 turns)
+### Recent Events (last ${RECENT_EVENT_TURN_WINDOW} full turns, all actors)
 ${recentEvents}
 
-### Diplomacy History (last 3 turns)
+### Diplomacy History (last ${RECENT_DIPLOMACY_TURN_WINDOW} turns, messages involving your family)
 ${recentDiplomacy}
 
 ### Active Alliances
@@ -247,12 +257,14 @@ ${fortList}
 ## AVAILABLE ACTIONS — Choose exactly ONE:
 
 ${canAttack ? `**ATTACK** — Send muscle to attack an enemy territory
-  - You'll send up to 5 muscle from your strongest territories (leaving 1 behind each)
+  - You can attack with muscle from one or multiple territories (no hard cap)
+  - Optional: include "musclePerTerritory" in your JSON to choose exact amounts by territory ID
+  - If you omit "musclePerTerritory", the engine auto-allocates your attack force
   - Combat is weighted random: more muscle = higher chance of winning
   - ⚠️ **DEFENSE BONUS:** Better businesses provide defensive advantage! (Numbers +1, Speakeasy +2, Brothel +3, Casino +5, Smuggling +7)
   - Both sides take casualties (20-50% losses)
   - 🏴 **If you win:** Territory resets to Protection Racket (damaged in fighting)
-  - Pick a target from enemy territories above` : '**ATTACK** — ❌ Not enough muscle (need 3+)'}
+  - Pick a target from enemy territories above` : '**ATTACK** — ❌ ' + (enemyTerritoriesList.length === 0 ? 'No enemy territories left' : 'Not enough muscle (need 1+)')}
 
 ${canClaim ? `**CLAIM** — Claim an unclaimed territory
   - Moves 1 muscle from your strongest territory to the new one
@@ -260,7 +272,8 @@ ${canClaim ? `**CLAIM** — Claim an unclaimed territory
   - Free expansion, no combat required
   - Pick from unclaimed territories above` : '**CLAIM** — ❌ ' + (unclaimed.length === 0 ? 'No unclaimed territories left' : 'Not enough muscle (need 2+)')}
 
-${canHire ? `**HIRE** — Recruit muscle ($${MUSCLE_HIRE_COST} each, max ${hireMax})
+${canHire ? `**HIRE** — Recruit muscle ($${MUSCLE_HIRE_COST} each, up to ${MAX_HIRE_PER_TURN} per turn)
+  - Optional: include "count" in your JSON (1-${hireMax}) to control how many to hire
   - Stationed at your weakest territory
   - You can afford up to ${hireMax} muscle ($${hireMax * MUSCLE_HIRE_COST})` : '**HIRE** — ❌ Cannot afford ($' + MUSCLE_HIRE_COST + ' per muscle)'}
 
@@ -282,12 +295,12 @@ You may ALSO send ONE diplomacy message to another active family:
 - **COORDINATE_ATTACK** <family_id> against <target_family_id> — Propose joint attack
 ${activeFamilyIds.length > 0 ? `Active families you can message: ${activeFamilyIds.join(', ')}` : 'No active families to message.'}
 
-⚠️ **Do NOT re-propose partnerships that are already ACCEPTED or still PENDING.** Check the diplomacy log above. Only propose if there is no existing active/pending partnership with that family.
+⚠️ **Do NOT re-propose partnerships or coordinate attacks that are already ACCEPTED or still PENDING.** Check the diplomacy log above.
 
 ## ALLIANCE MECHANICS
 - **Active partnerships** grant +2 defense bonus when your allied territory is attacked
 - **Betrayal penalty:** If you attack a partner, you lose $200 and 2 muscle desert
-- **Coordinate attacks:** When you and your ally attack the same family's territory in the same turn, you get +30% combat bonus
+- **Coordinate attacks:** Diplomatic coordination signal (no direct combat stat bonus in current mechanics)
 - Consider these mechanics when deciding whether to maintain or break alliances
 
 ## OPTIONAL: Covert Operation (in addition to your action and diplomacy)
@@ -305,6 +318,8 @@ You MUST respond with ONLY a valid JSON object, no other text:
 {
   "action": "attack|claim|hire|business|wait",
   "target": "territory_id_or_null",
+  "count": "number 1-${MAX_HIRE_PER_TURN} (optional, only for hire action)",
+  "musclePerTerritory": {"your_territory_id": 3} (optional, only for attack action),
   "business": "protection|numbers|speakeasy|brothel|casino|smuggling (only for business action)",
   "reasoning": "1-2 sentence strategic explanation",
   "diplomacy": {"type": "war|partnership|coordinate_attack", "target": "family_id", "targetFamily": "family_id_only_for_coordinate_attack"} or null,
@@ -338,6 +353,16 @@ export function parseAIResponse(raw: string): AIAction | null {
 
   try {
     const parsed = JSON.parse(jsonStr);
+    const parsedCount = Math.floor(Number(parsed.count));
+    const musclePerTerritory = (parsed.musclePerTerritory &&
+      typeof parsed.musclePerTerritory === 'object' &&
+      !Array.isArray(parsed.musclePerTerritory))
+      ? Object.fromEntries(
+        Object.entries(parsed.musclePerTerritory as Record<string, unknown>)
+          .map(([territoryId, amount]) => [territoryId, Math.floor(Number(amount))] as const)
+          .filter(([, amount]) => Number.isFinite(amount) && amount > 0)
+      )
+      : undefined;
 
     // Validate required fields
     const validActions = ['attack', 'claim', 'hire', 'business', 'wait'];
@@ -349,6 +374,8 @@ export function parseAIResponse(raw: string): AIAction | null {
     return {
       action: parsed.action,
       target: parsed.target || undefined,
+      count: Number.isInteger(parsedCount) && parsedCount > 0 ? parsedCount : undefined,
+      musclePerTerritory,
       business: parsed.business || undefined,
       reasoning: parsed.reasoning || 'No reasoning provided.',
       diplomacy: parsed.diplomacy || null,

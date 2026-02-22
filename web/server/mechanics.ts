@@ -6,6 +6,7 @@
 // ── Constants ──
 
 export const MUSCLE_HIRE_COST = 50;
+export const MAX_HIRE_PER_TURN = 10;
 export const MUSCLE_UPKEEP_COST = 10;
 
 // ── Business Types ──
