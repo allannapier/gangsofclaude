@@ -3,6 +3,15 @@ import { useGameStore } from '../store';
 import { FAMILY_COLORS, DIPLOMACY_LABELS, BUSINESS_DEFINITIONS, COVERT_OP_DEFINITIONS, type DiplomacyType, type BusinessType, type Territory, type CovertOpType, type SaveState } from '../types';
 import { ActionIcon, MuscleIcon, UpgradeIcon, MoveIcon, MessageIcon, NewGameIcon } from './Icons';
 
+const TOKEN_KEY = 'gangs-of-claude-token';
+
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return token
+    ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+    : { 'Content-Type': 'application/json' };
+}
+
 function ActionToast({ result, onDismiss }: { result: { success: boolean; message: string }; onDismiss: () => void }) {
   const [visible, setVisible] = useState(false);
 
@@ -490,7 +499,7 @@ function CovertOpsForm({ playerFamily, families, myTerritories, enemyTerritories
         || '';
       const res = await fetch(`${API_BASE}/api/covert`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ type: opType, target: resolvedTarget }),
       });
       const data = await res.json();
@@ -593,7 +602,7 @@ function DiplomacyProposal({ message, messageIndex }: { message: any; messageInd
       console.log('[DiplomacyProposal] Fetching:', url, { messageIndex, response });
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ messageIndex, response }),
       });
       
