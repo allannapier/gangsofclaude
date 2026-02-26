@@ -1,6 +1,7 @@
 ---
 name: defensive-crisis-moretti
 description: Moretti family guidance when attacked recently - ALL actions
+user-invocable: false
 tools: Read
 model: sonnet
 permissionMode: default

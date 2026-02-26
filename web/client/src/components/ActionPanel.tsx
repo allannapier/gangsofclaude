@@ -502,6 +502,11 @@ function CovertOpsForm({ playerFamily, families, myTerritories, enemyTerritories
         headers: authHeaders(),
         body: JSON.stringify({ type: opType, target: resolvedTarget }),
       });
+      if (res.status === 401) {
+        localStorage.removeItem(TOKEN_KEY);
+        window.location.reload();
+        return;
+      }
       const data = await res.json();
       useGameStore.setState({
         actionResult: { success: data.success, message: data.message || data.error || 'Operation complete' },
@@ -582,38 +587,28 @@ function DiplomacyProposal({ message, messageIndex }: { message: any; messageInd
   const store = useGameStore();
   const { state } = store;
   const [responding, setResponding] = useState(false);
-  
-  console.log('[DiplomacyProposal] Rendering:', { message, messageIndex, responding });
-  
+
   const fromFamily = state.families[message.from];
   if (!fromFamily) {
-    console.error('[DiplomacyProposal] Family not found:', message.from);
     return null;
   }
-  
+
   const familyColor = FAMILY_COLORS[message.from] || '#888';
-  
+
   const handleResponse = async (response: 'accept' | 'reject') => {
-    console.log('[DiplomacyProposal] Button clicked:', response, 'messageIndex:', messageIndex);
     setResponding(true);
     try {
       const API_BASE = `http://${window.location.hostname}:3456`;
-      const url = `${API_BASE}/api/diplomacy-respond`;
-      console.log('[DiplomacyProposal] Fetching:', url, { messageIndex, response });
-      const res = await fetch(url, {
+      const res = await fetch(`${API_BASE}/api/diplomacy-respond`, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ messageIndex, response }),
       });
-      
-      console.log('[DiplomacyProposal] Fetch completed, status:', res.status, res.ok);
-      
+
       if (!res.ok) {
         const text = await res.text();
-        console.error('[DiplomacyProposal] Server error:', res.status, text);
-        // Handle 401 by reloading to trigger PIN entry
         if (res.status === 401) {
-          localStorage.removeItem('gangs-of-claude-token');
+          localStorage.removeItem(TOKEN_KEY);
           window.location.reload();
           return;
         }
@@ -621,24 +616,17 @@ function DiplomacyProposal({ message, messageIndex }: { message: any; messageInd
         setResponding(false);
         return;
       }
-      
+
       const data = await res.json();
-      console.log('[DiplomacyProposal] Response:', data);
-      
+
       if (!data.success) {
-        console.error('[DiplomacyProposal] Failed:', data.error);
-        // Show error in UI
         useGameStore.setState({ actionResult: { success: false, message: data.error || 'Failed to respond' } });
         setResponding(false);
       } else {
-        console.log('[DiplomacyProposal] Success:', data.message);
-        // Show success in UI
         useGameStore.setState({ actionResult: { success: true, message: data.message } });
-        // Let WebSocket update handle the rest - the proposal will disappear when state updates
       }
     } catch (e) {
       const err = e as Error;
-      console.error('[DiplomacyProposal] Fetch exception:', e, err.message, err.stack);
       useGameStore.setState({ actionResult: { success: false, message: `Network error: ${err.message || String(e)}` } });
       setResponding(false);
     }

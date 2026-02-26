@@ -15,7 +15,7 @@ One family controls >40% of territories. Monopolies are bad for business.
 
 ## Core Directive
 
-A monopoly destroys competition. We need them weakened — but not eliminated. Competition is healthy.
+A monopoly destroys competition. We need them weakened — and eliminated if that is what it takes to win. No family should control the city unchallenged.
 
 ## Main Action Guidance
 
@@ -56,7 +56,7 @@ After your action, update your MEMORY.md:
 
 ```json
 {
-  "action": "covert|attack",
+  "action": "attack|wait",
   "target": "dominant_family_territory",
   "covert": {"type": "sabotage", "target": "their_best_business"},
   "diplomacy": {"type": "partnership|coordinate_attack", "target": "second_place", "targetFamily": "dominant_family"},

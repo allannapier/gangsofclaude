@@ -59,6 +59,7 @@ After your action, update your MEMORY.md:
   "action": "claim",
   "target": "unclaimed_territory_id",
   "covert": {"type": "spy", "target": "aggressive_claimer"},
+  "diplomacy": {"type": "partnership", "target": "rival_family_id"},
   "reasoning": "Free real estate, zero risk, pure profit. Best investment available.",
   "taunt": "Undervalued assets. I'll take them."
 }

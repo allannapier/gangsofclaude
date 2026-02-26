@@ -1186,6 +1186,263 @@ app.get('/api/health', (c) => c.json({ status: 'ok', turn: gameState.turn }));
 // Get game state
 app.get('/api/state', (c) => c.json(gameState));
 
+// Reset all family agent memory files to initial state for a fresh game
+function resetAgentMemories() {
+  const memoryDir = join(rootDir, '..', '.claude', 'agent-memory');
+  const initialMemories: Record<string, string> = {
+    falcone: `# Falcone Family Strategic Memory
+
+Last Updated: Turn 0 (Initialization)
+
+## Previous Turn Summary (N-1)
+
+**Turn 0 Actions:**
+- Setup phase - no actions yet
+
+## Previous Turn Summary (N-2)
+
+None yet.
+
+## Strategic Assessment
+
+### Current Situation
+- Territories: 2 (Downtown, Financial District)
+- Wealth: $500
+- Muscle: 4 total (2 per territory)
+- Threat Level: LOW
+
+### Enemy Observations
+- Marinelli: 2 territories, impulsive, dangerous
+- Rossetti: 2 territories, greedy, predictable
+- Moretti: 2 territories, honorable, exploitable
+
+### Relationship Status
+- Allies: None (temporary only)
+- Enemies: None (yet)
+- Neutral: All families (all are pieces on the board)
+
+## 3-Move Strategic Plan
+
+### Turn 1 (Current)
+**Goal:** Quiet expansion
+**Planned Actions:**
+- Main: Claim unclaimed territory (strategic position)
+- Covert: None (don't reveal intentions)
+- Diplomacy: None (watch and wait)
+
+### Turn 2
+**Goal:** Gather intelligence
+**CONDITIONS:** Spy on strongest rival
+
+### Turn 3
+**Goal:** Exploit conflict
+**CONDITIONS:** Let others fight, pick up pieces
+
+## Active Grudges & Debts
+
+None yet. Everyone will reveal themselves eventually.
+
+## Key Insights
+
+- Information is the ultimate weapon
+- Patience reveals opportunities
+- Let enemies destroy each other
+
+## Memory Rules
+
+- Always spy on the strongest
+- Betray at the optimal moment
+- Never show your full hand
+`,
+    marinelli: `# Marinelli Family Strategic Memory
+
+Last Updated: Turn 0 (Initialization)
+
+## Previous Turn Summary
+
+**Turn 0 Actions:**
+- Setup phase - no actions yet
+
+## Strategic Assessment
+
+### Current Situation
+- Territories: 2 (Little Italy, Warehouse District)
+- Wealth: $500
+- Muscle: 4 total (2 per territory)
+- Threat Level: LOW
+
+### Enemy Observations
+- Rossetti: 2 territories, unknown strength
+- Falcone: 2 territories, unknown strength
+- Moretti: 2 territories, unknown strength
+
+### Relationship Status
+- Allies: None
+- Enemies: None
+- Neutral: All families (watching for weakness)
+
+## 3-Move Strategic Plan
+
+### Turn 1 (Current)
+**Goal:** Expand territory quickly
+**Planned Actions:**
+- Main: Claim unclaimed territory
+- Covert: None (save money)
+- Diplomacy: None (too early)
+
+### Turn 2
+**Goal:** Build military strength
+**Conditions:** Claim successfully, wealth stable
+
+### Turn 3
+**Goal:** Identify first target
+**Conditions:** Assess who is weakest after initial expansion
+
+## Active Grudges & Debts
+
+None yet. We're just getting started.
+
+## Key Insights
+
+- Free territories won't last long
+- Need to establish presence before others claim everything
+- Early aggression sets the tone
+
+## Memory Rules
+
+- Always retaliate when attacked (Marinelli honor)
+- Claim free territory while available
+- Build muscle over businesses (raw power)
+`,
+    moretti: `# Moretti Family Strategic Memory
+
+Last Updated: Turn 0 (Initialization)
+
+## Previous Turn Summary
+
+**Turn 0 Actions:**
+- Setup phase - no actions yet
+
+## Strategic Assessment
+
+### Current Situation
+- Territories: 2 (East Side, Harbor)
+- Wealth: $500
+- Muscle: 4 total (2 per territory)
+- Threat Level: LOW
+
+### Enemy Observations
+- Marinelli: 2 territories, aggressive, dishonorable
+- Rossetti: 2 territories, greedy, no principles
+- Falcone: 2 territories, deceptive, dangerous
+
+### Relationship Status
+- Allies: None
+- Enemies: None
+- Neutral: All families (cautious approach)
+
+## 3-Move Strategic Plan
+
+### Turn 1 (Current)
+**Goal:** Secure our perimeter
+**Planned Actions:**
+- Main: Claim adjacent unclaimed territory
+- Covert: None (defensive posture)
+- Diplomacy: None (observe first)
+
+### Turn 2
+**Goal:** Build defensive strength
+**CONDITIONS:** Hire muscle, fortify
+
+### Turn 3
+**Goal:** Assess honor of rivals
+**CONDITIONS:** Identify potential honorable allies
+
+## Active Grudges & Debts
+
+None yet. We start with clean hands.
+
+## Key Insights
+
+- Honor must be maintained even in war
+- Defensive depth prevents catastrophe
+- Loyalty is our greatest strength
+
+## Memory Rules
+
+- Never betray an ally (word is bond)
+- Retaliate when attacked (honor demands)
+- Build steadily, don't overextend
+`,
+    rossetti: `# Rossetti Family Strategic Memory
+
+Last Updated: Turn 0 (Initialization)
+
+## Previous Turn Summary
+
+**Turn 0 Actions:**
+- Setup phase - no actions yet
+
+## Strategic Assessment
+
+### Current Situation
+- Territories: 2 (North End, Fishmarket)
+- Wealth: $500
+- Muscle: 4 total (2 per territory)
+- Threat Level: LOW
+
+### Enemy Observations
+- Marinelli: 2 territories, aggressive reputation
+- Falcone: 2 territories, cunning reputation
+- Moretti: 2 territories, defensive reputation
+
+### Relationship Status
+- Allies: None
+- Enemies: None
+- Neutral: All families (evaluate partnerships)
+
+## 3-Move Strategic Plan
+
+### Turn 1 (Current)
+**Goal:** Acquire free assets
+**Planned Actions:**
+- Main: Claim unclaimed territory
+- Covert: None (save money)
+- Diplomacy: None (assess opportunities first)
+
+### Turn 2
+**Goal:** Build economic foundation
+**CONDITIONS:** Claim successfully, start upgrades
+
+### Turn 3
+**Goal:** Evaluate partnerships
+**CONDITIONS:** Identify non-threatening ally
+
+## Active Grudges & Debts
+
+None yet. Business is business.
+
+## Key Insights
+
+- Free real estate is best investment
+- Early economy compounds over time
+- Diplomacy is cheaper than war
+
+## Memory Rules
+
+- Money is power - prioritize income
+- Partnerships should be profitable
+- Attack only when ROI is positive
+`,
+  };
+
+  for (const [family, content] of Object.entries(initialMemories)) {
+    const dir = join(memoryDir, family);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'MEMORY.md'), content, 'utf-8');
+  }
+}
+
 // Start new game (choose family)
 app.post('/api/start', async (c) => {
   const body = await c.req.json();
@@ -1198,6 +1455,7 @@ app.post('/api/start', async (c) => {
   gameState.phase = 'playing';
   gameState.turn = 1;
   saveState();
+  resetAgentMemories();
   broadcast({ type: 'state_update', state: gameState });
   return c.json({ success: true, state: gameState });
 });

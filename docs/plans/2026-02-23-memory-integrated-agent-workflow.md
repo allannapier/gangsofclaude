@@ -90,10 +90,9 @@ Evaluate in order (considering memory):
 1. **DESPERATION** (≤2 territories) → Invoke `/desperation-marinelli`
 2. **DEFENSIVE_CRISIS** (attacked in last 2 turns) → Invoke `/defensive-crisis-marinelli`
    - Check memory: Do you already owe this family a grudge? Priority ++
-3. **GRUDGE_EXECUTION** (memory shows unavenged attack >2 turns ago) → Invoke `/grudge-marinelli`
-4. **DOMINANT_THREAT** (enemy >40%) → Invoke `/dominant-threat-marinelli`
-5. **EXPANSION_WINDOW** (unclaimed) → Invoke `/expansion-window-marinelli`
-6. **ECONOMIC_BUILD** → Invoke `/economic-build-marinelli`
+3. **DOMINANT_THREAT** (enemy >40%) → Invoke `/dominant-threat-marinelli`
+4. **EXPANSION_WINDOW** (unclaimed) → Invoke `/expansion-window-marinelli`
+5. **ECONOMIC_BUILD** → Invoke `/economic-build-marinelli`
 
 ### Step 4: Invoke Scenario Skill
 

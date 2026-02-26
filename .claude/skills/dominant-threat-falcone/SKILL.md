@@ -56,7 +56,8 @@ After your action, update your MEMORY.md:
 
 ```json
 {
-  "action": "covert|claim",
+  "action": "claim|wait",
+  "target": "unclaimed_territory_id_or_null",
   "covert": {"type": "spy|sabotage", "target": "dominant_family"},
   "diplomacy": {"type": "coordinate_attack", "target": "everyone_else", "targetFamily": "dominant_family"},
   "reasoning": "Coordinate everyone against dominant threat. Pick up pieces after.",

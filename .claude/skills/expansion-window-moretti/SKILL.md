@@ -1,6 +1,7 @@
 ---
 name: expansion-window-moretti
 description: Moretti family guidance when unclaimed territories available - ALL actions
+user-invocable: false
 tools: Read
 model: sonnet
 permissionMode: default
@@ -59,7 +60,7 @@ After your action, update your MEMORY.md:
   "action": "claim",
   "target": "adjacent_unclaimed_territory",
   "covert": {"type": "fortify", "target": "border_territory"},
-  "diplomacy": {"type": "partnership", "target": "honorable_neighbor"},
+  "diplomacy": {"type": "partnership", "target": "rival_family_id"},
   "reasoning": "Defensive expansion. Secure our perimeter.",
   "taunt": "We expand to protect what we have."
 }

@@ -285,7 +285,7 @@ You rule through loyalty and measured strength. You don't start wars — you fin
 **Step 6: Verify TypeScript compiles**
 
 ```bash
-cd /home/allan/code/la_cosa_nostra/web/server
+cd web/server
 npx tsc --noEmit ai-prompts.ts
 ```
 
@@ -309,7 +309,7 @@ agent personality changes in the LLM prompts."
 **Step 1: Check TypeScript compilation**
 
 ```bash
-cd /home/allan/code/la_cosa_nostra/web
+cd web
 npm run build 2>&1 | head -50
 ```
 
@@ -334,7 +334,7 @@ After all tasks are complete, test the changes:
 Start the game and play through several turns:
 
 ```bash
-cd /home/allan/code/la_cosa_nostra/web
+cd web
 npm run dev
 ```
 

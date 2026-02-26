@@ -15,7 +15,7 @@
 **Step 1: Create directories for all 20 skills**
 
 ```bash
-cd /home/allan/code/la_cosa_nostra/.claude/skills
+cd .claude/skills
 
 # Desperation scenarios
 mkdir -p desperation-marinelli desperation-rossetti desperation-falcone desperation-moretti
@@ -36,7 +36,7 @@ mkdir -p economic-build-marinelli economic-build-rossetti economic-build-falcone
 **Step 2: Verify directories created**
 
 ```bash
-ls -la /home/allan/code/la_cosa_nostra/.claude/skills/
+ls -la .claude/skills/
 ```
 
 Expected: 20 directories listed
@@ -44,7 +44,7 @@ Expected: 20 directories listed
 **Step 3: Commit**
 
 ```bash
-cd /home/allan/code/la_cosa_nostra
+cd .
 git add .claude/skills/
 git commit -m "chore: create skill directories for 20 family-specific scenario skills"
 ```

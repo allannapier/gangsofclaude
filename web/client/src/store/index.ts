@@ -174,14 +174,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
     ws.onclose = (event) => {
       console.log('[WS] Disconnected', event.code, event.reason);
       set({ connected: false, ws: null });
-      // 1006 = abnormal closure (auth failed), 1000 = normal close
-      // If auth failed, don't retry - trigger re-auth instead
-      if (event.code === 1006 && get().authStatus === 'authenticated') {
-        console.log('[WS] Auth likely expired, reloading to trigger PIN entry');
+      // Only reload on explicit auth rejection codes (3401/4401), not on network drops (1006)
+      if ((event.code === 3401 || event.code === 4401) && get().authStatus === 'authenticated') {
+        console.log('[WS] Auth rejected by server, reloading to trigger PIN entry');
         handleAuthError();
         return;
       }
-      // Only reconnect if still authenticated (avoid reconnect loop if token invalid)
+      // Reconnect on network drops (1006) or normal close while still authenticated
       if (get().authStatus === 'authenticated') {
         setTimeout(() => get().connect(), 2000);
       }

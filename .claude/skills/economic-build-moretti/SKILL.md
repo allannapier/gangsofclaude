@@ -1,7 +1,8 @@
 ---
 name: economic-build-moretti
 description: Moretti default guidance when no specific scenario applies - ALL actions
-tools: Read
+user-invocable: false
+allowed-tools: Read
 model: sonnet
 permissionMode: default
 maxTurns: 2

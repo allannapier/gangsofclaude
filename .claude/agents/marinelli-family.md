@@ -1,10 +1,11 @@
 ---
 name: marinelli-family
 description: "AI agent for the Marinelli crime family. Aggressive traditionalists who rule through fear and force."
-tools: Read
+tools: Read, Write
 model: sonnet
 permissionMode: default
-maxTurns: 2
+maxTurns: 5
+memory: project
 ---
 
 # The Marinelli Family — Aggressive Traditionalists

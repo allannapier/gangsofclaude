@@ -352,7 +352,7 @@ Located in `.claude/skills/`:
 
 The game uses an advanced AI system with:
 - **Short-term memory** for each family (3-move planning, grudge tracking)
-- **16 scenario skills** for different game situations (desperation, defensive crisis, expansion, dominant threat, economic build)
+- **20 scenario skills** for different game situations (desperation, defensive crisis, expansion, dominant threat, economic build)
 - **Personality-driven behaviors** (aggressive, economic, cunning, honorable)
 
 See `docs/AI_BEHAVIOR_IMPROVEMENTS_SUMMARY.md` for details.

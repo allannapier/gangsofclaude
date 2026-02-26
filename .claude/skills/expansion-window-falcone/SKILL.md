@@ -59,7 +59,7 @@ After your action, update your MEMORY.md:
   "action": "claim",
   "target": "unclaimed_territory_id",
   "covert": {"type": "spy", "target": "strongest_family"},
-  "diplomomacy": {"type": "coordinate_attack", "target": "family_a", "targetFamily": "family_b"},
+  "diplomacy": {"type": "coordinate_attack", "target": "family_a", "targetFamily": "family_b"},
   "reasoning": "Quiet expansion while others fight. Strategic positioning.",
   "taunt": "The board expands. Pieces fall into place."
 }

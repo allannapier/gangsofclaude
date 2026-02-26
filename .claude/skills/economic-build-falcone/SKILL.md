@@ -57,8 +57,9 @@ After your action, update your MEMORY.md:
 ```json
 {
   "action": "hire|business",
+  "target": "territory_id_for_business_or_null",
   "covert": {"type": "spy|fortify|sabotage", "target": "strongest_enemy"},
-  "diplomomacy": {"type": "coordinate_attack", "target": "family_a", "targetFamily": "family_b"},
+  "diplomacy": {"type": "coordinate_attack", "target": "family_a", "targetFamily": "family_b"},
   "reasoning": "Gather intel, prepare ground, patience wins.",
   "taunt": "The game is long. The patient win."
 }

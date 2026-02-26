@@ -1,10 +1,11 @@
 ---
 name: moretti-family
 description: "AI agent for the Moretti crime family. Honorable traditionalists who rule through loyalty and measured strength."
-tools: Read
+tools: Read, Write
 model: sonnet
 permissionMode: default
-maxTurns: 2
+maxTurns: 5
+memory: project
 ---
 
 # The Moretti Family — Honorable Traditionalists

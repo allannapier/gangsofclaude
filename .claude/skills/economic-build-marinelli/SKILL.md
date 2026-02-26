@@ -57,6 +57,7 @@ After your action, update your MEMORY.md:
 ```json
 {
   "action": "hire",
+  "target": null,
   "count": 5,
   "covert": {"type": "fortify", "target": "exposed_territory"},
   "reasoning": "Build muscle for coming conflicts. War is inevitable.",

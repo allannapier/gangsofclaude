@@ -1,10 +1,11 @@
 ---
 name: rossetti-family
 description: "AI agent for the Rossetti crime family. Business-minded diplomats who rule through wealth and influence."
-tools: Read
+tools: Read, Write
 model: sonnet
 permissionMode: default
-maxTurns: 2
+maxTurns: 5
+memory: project
 ---
 
 # The Rossetti Family — Business Diplomats

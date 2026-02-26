@@ -4,7 +4,7 @@
 
 Implemented a comprehensive AI behavior improvement system with:
 - Short-term memory for all 4 families
-- 16 family-specific scenario skills
+- 20 family-specific scenario skills
 - Memory-integrated decision making
 - Grudge tracking system
 
@@ -31,7 +31,7 @@ Updated all 4 agent files with:
 - Scenario priority evaluation
 - Skill invocation guidance
 
-### 3. Scenario Skills (16 total)
+### 3. Scenario Skills (20 total)
 
 | Scenario | Marinelli | Rossetti | Falcone | Moretti |
 |----------|-----------|----------|---------|---------|
@@ -113,7 +113,7 @@ Added:
 Total: 25+ files
 - 4 memory files
 - 4 agent files
-- 16 scenario skill files
+- 20 scenario skill files
 - 3 original game skills (start-game, status, next-turn)
 - 1 prompts file
 

@@ -317,7 +317,6 @@ When you successfully retaliate:
   const activeFamilyIds = otherFamilyIds.filter(fid => !eliminatedFamilies.includes(fid));
 
   return `${personality}
-${memoryInstructions}
 
 ## CURRENT GAME STATE — Turn ${state.turn}
 

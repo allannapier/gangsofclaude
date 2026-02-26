@@ -1,6 +1,7 @@
 ---
 name: defensive-crisis-rossetti
 description: Rossetti family guidance when attacked recently - ALL actions
+user-invocable: false
 tools: Read
 model: sonnet
 permissionMode: default
@@ -56,10 +57,10 @@ After your action, update your MEMORY.md:
 
 ```json
 {
-  "action": "attack|fortify",
+  "action": "attack|wait",
   "target": "attacker_territory",
   "covert": {"type": "bribe|sabotage|spy", "target": "attacker"},
-  "diplomacy": {"type": "partnership", "target": "other_victim"},
+  "diplomacy": {"type": "partnership", "target": "rival_family_id"},
   "reasoning": "Economic retaliation. Make aggression unprofitable.",
   "taunt": "Attacking us was a poor business decision."
 }

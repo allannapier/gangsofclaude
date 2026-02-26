@@ -22,7 +22,6 @@
 **Step 1: Create directories**
 
 ```bash
-cd /home/allan/code/la_cosa_nostra
 mkdir -p .claude/agent-memory/{marinelli,rossetti,falcone,moretti}
 ```
 
