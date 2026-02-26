@@ -800,18 +800,18 @@ async function processNextTurn(): Promise<{ events: GameEvent[]; winner: string 
     broadcast({ type: 'turn_event', event });
   };
 
-  // 0. Process expiring effects from previous turn
-  processActiveEffects(gameState);
-  processExpiredIntelAndFortifications(gameState);
-
-  // 1. Economy phase
+  // 1. Economy phase — must run BEFORE expiring effects so this turn's penalties apply
   const econEvents = processEconomy();
   turnEvents.push(...econEvents);
   for (const e of econEvents) {
     broadcastEvent(e);
   }
 
-  // 2. City events (random events that affect gameplay)
+  // 2. Expire effects that ran their course this turn
+  processActiveEffects(gameState);
+  processExpiredIntelAndFortifications(gameState);
+
+  // 3. City events (random events that affect gameplay — effects added here apply next turn)
   const cityEvent = rollCityEvent(gameState);
   if (cityEvent) {
     turnEvents.push(cityEvent);

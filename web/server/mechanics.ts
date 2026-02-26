@@ -364,9 +364,9 @@ function applyCityEvent(state: SaveState, def: CityEventDefinition): GameEvent {
         type: 'press_scandal',
         targetFamily: target,
         turnsRemaining: 1,
-        description: `Press scandal halving ${state.families[target].name} income`,
+        description: `Press scandal reducing ${state.families[target].name} income by 25%`,
       });
-      return { turn: state.turn, actor: 'City', action: 'city_event', details: `${def.icon} ${def.name}: The newspapers expose ${state.families[target].name} operations! Income halved this turn.` };
+      return { turn: state.turn, actor: 'City', action: 'city_event', details: `${def.icon} ${def.name}: The newspapers expose ${state.families[target].name} operations! Income reduced 25% next turn.` };
     }
     case 'windfall': {
       // Random family gets $300
@@ -604,8 +604,8 @@ export function processFamilyEconomy(
 ): { income: number; upkeep: number; deserted: number; netWealth: number } {
   const family = state.families[familyId];
   let income = calculateFamilyIncome(state.territories, familyId, state);
-  // Press scandal halves income
-  if (isFamilyScandal(state, familyId)) income = Math.floor(income / 2);
+  // Press scandal reduces income by 25%
+  if (isFamilyScandal(state, familyId)) income = Math.floor(income * 3 / 4);
   const upkeep = calculateUpkeepCost(state.territories, familyId);
   const netIncome = income - upkeep;
   let newWealth = family.wealth + netIncome;
