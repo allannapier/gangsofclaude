@@ -611,6 +611,12 @@ function DiplomacyProposal({ message, messageIndex }: { message: any; messageInd
       if (!res.ok) {
         const text = await res.text();
         console.error('[DiplomacyProposal] Server error:', res.status, text);
+        // Handle 401 by reloading to trigger PIN entry
+        if (res.status === 401) {
+          localStorage.removeItem('gangs-of-claude-token');
+          window.location.reload();
+          return;
+        }
         useGameStore.setState({ actionResult: { success: false, message: text || `Server error: ${res.status}` } });
         setResponding(false);
         return;

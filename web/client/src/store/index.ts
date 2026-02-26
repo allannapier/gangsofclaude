@@ -23,6 +23,13 @@ function buildWsUrl(): string {
   return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 
+// Handle 401 errors by clearing token and requiring re-authentication
+function handleAuthError() {
+  localStorage.removeItem(TOKEN_KEY);
+  // Force page reload to trigger PIN entry screen
+  window.location.reload();
+}
+
 export interface AttackModalData {
   attackerFamily: string;
   defenderFamily: string | null;
@@ -164,15 +171,25 @@ export const useGameStore = create<GameStore>((set, get) => ({
         }
       } catch {}
     };
-    ws.onclose = () => {
-      console.log('[WS] Disconnected');
+    ws.onclose = (event) => {
+      console.log('[WS] Disconnected', event.code, event.reason);
       set({ connected: false, ws: null });
+      // 1006 = abnormal closure (auth failed), 1000 = normal close
+      // If auth failed, don't retry - trigger re-auth instead
+      if (event.code === 1006 && get().authStatus === 'authenticated') {
+        console.log('[WS] Auth likely expired, reloading to trigger PIN entry');
+        handleAuthError();
+        return;
+      }
       // Only reconnect if still authenticated (avoid reconnect loop if token invalid)
       if (get().authStatus === 'authenticated') {
         setTimeout(() => get().connect(), 2000);
       }
     };
-    ws.onerror = () => ws.close();
+    ws.onerror = (err) => {
+      console.error('[WS] Error:', err);
+      ws.close();
+    };
   },
 
   disconnect: () => {
@@ -186,6 +203,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       headers: authHeaders(),
       body: JSON.stringify({ familyId }),
     });
+    if (res.status === 401) {
+      handleAuthError();
+      return;
+    }
     const data = await res.json();
     if (data.state) set({ state: data.state });
   },
@@ -196,6 +217,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       // Fire the API call — events stream in real-time via WebSocket
       // The response arrives when all AI families have acted (may take 30-60s)
       const res = await fetch(`${API_BASE}/api/next-turn`, { method: 'POST', headers: authHeaders() });
+      if (res.status === 401) {
+        handleAuthError();
+        return;
+      }
       const data = await res.json();
       // HTTP response arrives after all processing; WebSocket already streamed events
       // Ensure final state is synced
@@ -222,6 +247,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       headers: authHeaders(),
       body: JSON.stringify({ action, ...params }),
     });
+    if (res.status === 401) {
+      handleAuthError();
+      return { success: false, message: 'Session expired. Please re-enter your PIN.' };
+    }
     const data = await res.json();
     const result = { success: data.success ?? false, message: data.message || data.error || 'Unknown error' };
     // Show cinematic modal for attacks, toast for everything else
@@ -234,7 +263,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   resetGame: async () => {
-    await fetch(`${API_BASE}/api/reset`, { method: 'POST', headers: authHeaders() });
+    const res = await fetch(`${API_BASE}/api/reset`, { method: 'POST', headers: authHeaders() });
+    if (res.status === 401) handleAuthError();
   },
 
   setSelectedAction: (action, territoryId) => set({ selectedAction: action, selectedTerritoryId: territoryId ?? null, actionResult: null }),

@@ -1,0 +1,39 @@
+=== MEMORY FILES ===
+.claude/agent-memory/rossetti/MEMORY.md
+.claude/agent-memory/marinelli/MEMORY.md
+.claude/agent-memory/falcone/MEMORY.md
+.claude/agent-memory/moretti/MEMORY.md
+
+=== SKILL FILES ===
+.claude/skills/defensive-crisis-falcone/SKILL.md
+.claude/skills/defensive-crisis-marinelli/SKILL.md
+.claude/skills/defensive-crisis-moretti/SKILL.md
+.claude/skills/defensive-crisis-rossetti/SKILL.md
+.claude/skills/desperation-falcone/SKILL.md
+.claude/skills/desperation-marinelli/SKILL.md
+.claude/skills/desperation-moretti/SKILL.md
+.claude/skills/desperation-rossetti/SKILL.md
+.claude/skills/dominant-threat-falcone/SKILL.md
+.claude/skills/dominant-threat-marinelli/SKILL.md
+.claude/skills/dominant-threat-moretti/SKILL.md
+.claude/skills/dominant-threat-rossetti/SKILL.md
+.claude/skills/economic-build-falcone/SKILL.md
+.claude/skills/economic-build-marinelli/SKILL.md
+.claude/skills/economic-build-moretti/SKILL.md
+.claude/skills/economic-build-rossetti/SKILL.md
+.claude/skills/expansion-window-falcone/SKILL.md
+.claude/skills/expansion-window-marinelli/SKILL.md
+.claude/skills/expansion-window-moretti/SKILL.md
+.claude/skills/expansion-window-rossetti/SKILL.md
+.claude/skills/next-turn/SKILL.md
+.claude/skills/start-game/SKILL.md
+.claude/skills/status/SKILL.md
+
+=== UPDATED AGENT FILES ===
+.claude/agents/marinelli-family.md
+.claude/agents/rossetti-family.md
+.claude/agents/falcone-family.md
+.claude/agents/moretti-family.md
+
+=== UPDATED PROMPTS FILE ===
+web/server/ai-prompts.ts
